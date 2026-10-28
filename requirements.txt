@@ -5,6 +5,7 @@ langgraph==0.2.60
 pymilvus==2.5.4
 pymongo==4.10.1
 pypdf==5.1.0
+python-multipart==0.0.20
 
 # BGE-M3 / BGE-Reranker weights are intentionally separated because they are
 # large and require a model cache. Install requirements-ml.txt when enabled.

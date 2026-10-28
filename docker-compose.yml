@@ -5,8 +5,11 @@ services:
       MILVUS_URI: http://milvus:19530
       MONGODB_URI: mongodb://mongodb:27017
       ENABLE_BGE: "0"
+      MAX_UPLOAD_BYTES: "20971520"
     ports:
       - "8000:8000"
+    volumes:
+      - uploads:/app/runtime/uploads
     depends_on:
       - milvus
       - mongodb
@@ -25,3 +28,6 @@ services:
     image: mongo:7
     ports:
       - "27017:27017"
+
+volumes:
+  uploads:

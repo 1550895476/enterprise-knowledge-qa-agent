@@ -32,3 +32,11 @@
 ## 技术栈补充
 
 高级实现对应 Python、LangGraph、Milvus、MongoDB、BGE-M3、BGE-Reranker、Docker、FastAPI。真实后端通过环境变量启用；离线评审不要求下载模型或启动数据库。
+
+## 用户上传文档
+
+- 支持 PDF、TXT、Markdown，默认限制 20 MiB；
+- 上传后生成内容哈希型 `document_id`，保存原文件、索引状态和 Chunk；
+- `/ask` 接收 `document_ids`，只允许从指定且状态为 `ready` 的上传文档检索；
+- 回答引用包含源文档 ID、页码、章节、Chunk ID 和原文；
+- 文件类型不支持、文件过大、解析失败或文档未就绪时返回明确错误。

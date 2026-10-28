@@ -47,11 +47,23 @@ class PdfPageParser:
             raise RuntimeError("PDF 解析需要安装 pypdf") from exc
         reader = PdfReader(str(pdf_path))
         pages = []
+        image_root = Path(image_dir) if image_dir else None
+        if image_root:
+            image_root.mkdir(parents=True, exist_ok=True)
         for index, page in enumerate(reader.pages, start=1):
             text = page.extract_text() or ""
             image_paths = []
-            if image_dir:
-                image_paths = [str(Path(image_dir) / f"page-{index:03d}.png")] if "/" in text else []
+            if image_root:
+                try:
+                    for image_index, image in enumerate(page.images, start=1):
+                        suffix = Path(image.name).suffix or ".bin"
+                        target = image_root / f"page-{index:03d}-image-{image_index:02d}{suffix}"
+                        target.write_bytes(image.data)
+                        image_paths.append(str(target))
+                except Exception:
+                    # Text extraction should still succeed when one embedded
+                    # image uses an unsupported PDF codec.
+                    pass
             pages.append(ParsedPage(index, text, self._title(text), [], image_paths))
         return pages
 

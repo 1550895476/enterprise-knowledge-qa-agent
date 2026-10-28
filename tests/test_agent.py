@@ -1,9 +1,11 @@
 import json
+import tempfile
 import unittest
 from pathlib import Path
 
 from src.agent import KnowledgeQAAgent
 from src.advanced_agent import EnterpriseKnowledgeAgent
+from src.document_service import DocumentUploadError, DocumentUploadService
 from src.ingestion import ParsedPage, StructureAwareChunker
 from src.retrieval import HybridRetriever
 from src.tools import KnowledgeBase
@@ -109,6 +111,49 @@ class ToolTests(unittest.TestCase):
         self.assertEqual(unresolved.status, "needs_confirmation")
         self.assertEqual(unresolved.citations, [])
         self.assertFalse(any(event.tool for event in unresolved.trace))
+
+    def test_upload_text_then_ask_only_selected_document(self):
+        with tempfile.TemporaryDirectory() as runtime:
+            agent = EnterpriseKnowledgeAgent()
+            service = DocumentUploadService(agent.retriever, runtime_root=runtime)
+            first = service.ingest_bytes(
+                "保修政策.md",
+                "# 产品保修政策\n\n本设备保修期为24个月，自激活之日起计算。".encode("utf-8"),
+                "text/markdown",
+            )
+            second = service.ingest_bytes(
+                "旧版政策.txt",
+                "旧版设备保修期为6个月。".encode("utf-8"),
+                "text/plain",
+            )
+            self.assertEqual(first.status, "ready")
+            self.assertGreater(first.chunk_count, 0)
+
+            result = agent.run("保修期是多久？", document_ids=[first.document_id])
+            self.assertEqual(result.status, "completed")
+            self.assertIn("24个月", result.answer)
+            self.assertNotIn("6个月", result.answer)
+            self.assertEqual(result.citations[0]["source_doc_id"], first.document_id)
+
+            other = agent.run("保修期是多久？", document_ids=[second.document_id])
+            self.assertIn("6个月", other.answer)
+
+            restored_agent = EnterpriseKnowledgeAgent()
+            restored_service = DocumentUploadService(restored_agent.retriever, runtime_root=runtime)
+            restored_service.require_ready([first.document_id])
+            restored = restored_agent.run("保修期是多久？", document_ids=[first.document_id])
+            self.assertIn("24个月", restored.answer)
+
+    def test_upload_rejects_unsupported_and_oversized_files(self):
+        with tempfile.TemporaryDirectory() as runtime:
+            agent = EnterpriseKnowledgeAgent()
+            service = DocumentUploadService(agent.retriever, runtime_root=runtime, max_upload_bytes=8)
+            with self.assertRaises(DocumentUploadError) as unsupported:
+                service.ingest_bytes("payload.exe", b"123")
+            self.assertEqual(unsupported.exception.status_code, 415)
+            with self.assertRaises(DocumentUploadError) as oversized:
+                service.ingest_bytes("notes.txt", b"123456789")
+            self.assertEqual(oversized.exception.status_code, 413)
 
 
 if __name__ == "__main__":

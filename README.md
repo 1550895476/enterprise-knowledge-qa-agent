@@ -48,6 +48,23 @@ uvicorn src.api:app --host 0.0.0.0 --port 8000
 curl -X POST http://localhost:8000/ask -H "Content-Type: application/json" -d "{\"question\":\"Pro X1 怎么开机\"}"
 ```
 
+上传文件并针对该文件提问：
+
+```bash
+# 支持 PDF、TXT、Markdown，默认最大 20 MiB
+curl -X POST http://localhost:8000/documents/upload \
+  -F "file=@./policy.pdf"
+
+# 上传返回 document_id 后，限定只检索该文档
+curl -X POST http://localhost:8000/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question":"保修期是多久？","document_ids":["UPL-返回的文档ID"]}'
+
+curl http://localhost:8000/documents/UPL-返回的文档ID/status
+```
+
+上传内容保存在 `runtime/uploads/`，该目录已加入 `.gitignore`；服务重启时会重新加载已完成索引的 Chunk。重复上传相同文件会复用同一个 `document_id`。
+
 启动 API、Milvus 和 MongoDB：
 
 ```bash
@@ -88,6 +105,7 @@ src/ingestion.py     PDF 页面解析、结构感知父子 Chunk
 src/retrieval.py     BGE/Milvus 适配、混合检索、HyDE、MCP、RRF、重排、Top-p
 src/storage.py       Milvus/MongoDB 适配与本地降级
 src/api.py           FastAPI 服务入口
+src/document_service.py 上传校验、持久化、索引和状态管理
 tests/               可执行单元测试与验收测试
 examples/            输入、实际输出、Trace
 data/                合成制度、商品库和 PDF Chunk
@@ -101,3 +119,4 @@ docs/                题目分析、方案、评估、AI 使用记录、复盘
 - 工具错误会进入下一轮决策；连续失败或达到步数上限会返回 `incomplete`。
 - 文档是合成材料，不包含真实企业隐私。
 - 高级链路在商品型号未确认时不会执行知识库检索；多个相似型号时先返回选择项。
+- 上传问答通过 `document_ids` 强制限定检索范围，避免不同用户选择的文档相互串库；当前示例未实现身份认证和租户权限，生产部署前必须补充。

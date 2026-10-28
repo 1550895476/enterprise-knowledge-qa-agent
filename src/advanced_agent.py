@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any, TypedDict
 
@@ -18,10 +17,17 @@ class AdvancedTools:
     def __init__(self, retriever: HybridRetriever):
         self.retriever = retriever
         self.product_id: str | None = None
+        self.document_ids: list[str] | None = None
         self._chunks: dict[str, dict[str, Any]] = {}
-        for chunk in retriever.chunks:
+        self._sync_chunks()
+
+    def _sync_chunks(self) -> None:
+        for chunk in self.retriever.chunks:
+            if chunk.chunk_id in self._chunks:
+                continue
             self._chunks[chunk.chunk_id] = {
                 "doc_id": chunk.chunk_id,
+                "source_doc_id": chunk.doc_id,
                 "title": chunk.title,
                 "version_date": chunk.version_date,
                 "applicability": chunk.applicability,
@@ -35,8 +41,17 @@ class AdvancedTools:
                 "source_type": chunk.source_type,
             }
 
+    def set_scope(self, product_id: str | None = None, document_ids: list[str] | None = None) -> None:
+        self.product_id = product_id
+        self.document_ids = document_ids
+
     def search(self, query: str) -> ToolObservation:
-        result = self.retriever.retrieve(query, product_id=self.product_id)
+        self._sync_chunks()
+        result = self.retriever.retrieve(
+            query,
+            product_id=self.product_id,
+            document_ids=self.document_ids,
+        )
         hits = []
         for item in result.candidates:
             hits.append({
@@ -67,6 +82,7 @@ class AdvancedTools:
         )
 
     def read(self, doc_id: str) -> ToolObservation:
+        self._sync_chunks()
         item = self._chunks.get(doc_id)
         if not item:
             return ToolObservation("read_chunk", False, f"Chunk {doc_id} 不存在", {"doc_id": doc_id})
@@ -77,6 +93,8 @@ class EnterpriseState(TypedDict, total=False):
     question: str
     history: list[dict[str, str]]
     selected_product_id: str | None
+    document_ids: list[str]
+    product_id: str | None
     resolution: dict[str, Any]
     result: dict[str, Any]
 
@@ -94,8 +112,19 @@ class EnterpriseKnowledgeAgent:
         self.max_steps = max_steps
         self.graph = self._build_graph()
 
-    def run(self, question: str, history: list[dict[str, str]] | None = None, selected_product_id: str | None = None) -> AgentResult:
-        state: EnterpriseState = {"question": question, "history": history or [], "selected_product_id": selected_product_id}
+    def run(
+        self,
+        question: str,
+        history: list[dict[str, str]] | None = None,
+        selected_product_id: str | None = None,
+        document_ids: list[str] | None = None,
+    ) -> AgentResult:
+        state: EnterpriseState = {
+            "question": question,
+            "history": history or [],
+            "selected_product_id": selected_product_id,
+            "document_ids": document_ids or [],
+        }
         final = self.graph.invoke(state)
         result = self._from_dict(final["result"])
         self.trace_store.append({"question": question, "resolution": final.get("resolution", {}), "result": result.to_dict()})
@@ -115,10 +144,19 @@ class EnterpriseKnowledgeAgent:
             graph.add_edge("stop", END)
             return graph.compile()
         except ImportError:
-            return _FallbackGraph(self._resolve_product, self._route_after_resolution, self._retrieve_answer)
+            return _FallbackGraph(self._resolve_product, self._route_after_resolution, self._retrieve_answer, self._stop)
 
     def _resolve_product(self, state: EnterpriseState) -> EnterpriseState:
-        resolution = self.matcher.resolve(state["question"], state.get("history", []), state.get("selected_product_id"))
+        document_ids = state.get("document_ids", [])
+        if document_ids:
+            resolution = ProductResolution(
+                "not_applicable",
+                state["question"],
+                [],
+                "用户明确指定了上传文档，按 document_ids 限定检索范围",
+            )
+        else:
+            resolution = self.matcher.resolve(state["question"], state.get("history", []), state.get("selected_product_id"))
         state["resolution"] = {
             "status": resolution.status,
             "rewritten_query": resolution.rewritten_query,
@@ -126,7 +164,7 @@ class EnterpriseKnowledgeAgent:
             "reason": resolution.reason,
         }
         if resolution.status == "resolved":
-            self.tools.product_id = resolution.candidates[0]["product_id"]
+            state["product_id"] = resolution.candidates[0]["product_id"]
         return state
 
     def _route_after_resolution(self, state: EnterpriseState) -> str:
@@ -136,7 +174,14 @@ class EnterpriseKnowledgeAgent:
         resolution = state["resolution"]
         if resolution["status"] == "ambiguous":
             return state
-        basic = KnowledgeQAAgent(self.tools, max_steps=self.max_steps)
+        # Scope is request-local. This prevents concurrent LangGraph runs from
+        # leaking a product or uploaded-document filter into another request.
+        scoped_tools = AdvancedTools(self.retriever)
+        scoped_tools.set_scope(
+            product_id=state.get("product_id"),
+            document_ids=state.get("document_ids") or None,
+        )
+        basic = KnowledgeQAAgent(scoped_tools, max_steps=self.max_steps)
         result = basic.run(resolution["rewritten_query"], history=state.get("history", []))
         # Keep the public response tied to the user's original wording; the
         # rewritten query remains visible in the graph resolution metadata and
@@ -173,8 +218,8 @@ class EnterpriseKnowledgeAgent:
 
 
 class _FallbackGraph:
-    def __init__(self, resolve, route, retrieve):
-        self.resolve, self.route, self.retrieve = resolve, route, retrieve
+    def __init__(self, resolve, route, retrieve, stop=None):
+        self.resolve, self.route, self.retrieve, self.stop = resolve, route, retrieve, stop
 
     def invoke(self, state: EnterpriseState) -> EnterpriseState:
         state = self.resolve(state)
@@ -182,6 +227,6 @@ class _FallbackGraph:
             state = self.retrieve(state)
         else:
             # Mirror the LangGraph stop node in the dependency-free fallback.
-            state = self._stop(state)
+            state = self.stop(state) if self.stop else state
         return state
 

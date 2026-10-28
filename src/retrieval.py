@@ -4,6 +4,7 @@ import json
 import hashlib
 import math
 import re
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -104,10 +105,35 @@ class HybridRetriever:
         self.store = store or MilvusVectorStore()
         self.embedder = BGEEmbeddingProvider()
         self.reranker = BGEReranker()
+        self._lock = threading.RLock()
         self.store.upsert([self._row(chunk) for chunk in self.chunks])
 
-    def retrieve(self, query: str, product_id: str | None = None, top_p: float = 0.85, limit: int = 8) -> RetrievalResult:
-        scoped = [chunk for chunk in self.chunks if not product_id or product_id in chunk.doc_id]
+    def add_chunks(self, chunks: list[Chunk | dict[str, Any]]) -> int:
+        """Add newly ingested chunks to the live index and backing store."""
+        prepared = [item if isinstance(item, Chunk) else Chunk(**item) for item in chunks]
+        with self._lock:
+            existing = {chunk.chunk_id for chunk in self.chunks}
+            added = [chunk for chunk in prepared if chunk.chunk_id not in existing]
+            self.chunks.extend(added)
+            if added:
+                self.store.upsert([self._row(chunk) for chunk in added])
+            return len(added)
+
+    def retrieve(
+        self,
+        query: str,
+        product_id: str | None = None,
+        document_ids: list[str] | None = None,
+        top_p: float = 0.85,
+        limit: int = 8,
+    ) -> RetrievalResult:
+        with self._lock:
+            scoped = list(self.chunks)
+        if document_ids:
+            allowed = set(document_ids)
+            scoped = [chunk for chunk in scoped if chunk.doc_id in allowed]
+        elif product_id:
+            scoped = [chunk for chunk in scoped if product_id in chunk.doc_id]
         hyde_query = self._hyde(query)
         dense = self._rank(hyde_query, scoped, mode="dense")
         sparse = self._rank(query, scoped, mode="sparse")

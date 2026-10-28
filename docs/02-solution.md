@@ -42,3 +42,17 @@
 5. `MilvusVectorStore`、`MongoTraceStore` 在配置连接串时接入真实服务，否则保留相同接口的内存实现。`requirements-ml.txt` 启用 BGE-M3/BGE-Reranker 权重。
 
 这条链路复用原有 Agent 的“模型动作—工具—观察—下一动作”循环，因此搜索候选不会直接成为答案，必须读取 Chunk 原文后再生成引用。
+
+## 上传文件并提问
+
+`DocumentUploadService` 完成以下链路：
+
+```text
+multipart 文件 → 类型/大小/PDF 头校验 → 隔离保存
+→ PDF 或文本解析 → 结构感知父子 Chunk
+→ 动态加入 HybridRetriever/Milvus 适配层
+→ 返回 document_id 与 ready 状态
+→ /ask 携带 document_ids → 请求级受限检索 → 原文引用回答
+```
+
+索引文件和状态保存在 `runtime/uploads/<document_id>/`，启动时自动恢复。`document_id` 来自 SHA-256，可对相同内容去重。检索工具按请求创建独立作用域实例，商品范围和上传文档范围通过 LangGraph 状态显式传递，避免并发请求串库。
