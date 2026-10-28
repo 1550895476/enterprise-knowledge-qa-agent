@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,10 @@ SYNONYMS = {
     "密码": {"密码", "口令", "登录密码"},
     "忘记": {"忘记", "忘了", "找回", "重置"},
     "研发": {"研发", "技术", "开发"},
+    "开机": {"开机", "启动", "开机启动"},
+    "电源键": {"电源键", "开关键", "电源按钮"},
+    "分辨率": {"分辨率", "清晰度"},
+    "配网": {"配网", "联网", "网络配置"},
 }
 
 
@@ -56,7 +61,15 @@ class KnowledgeBase:
                 continue
             score = len(matched) / max(len(terms), 1)
             snippet = doc.content[:180] + ("…" if len(doc.content) > 180 else "")
-            scored.append(SearchHit(doc.doc_id, doc.title, doc.version_date, doc.applicability, snippet, round(score, 3)))
+            scored.append(SearchHit(
+                doc.doc_id, doc.title, doc.version_date, doc.applicability, snippet, round(score, 3),
+                page_start=doc.page_start,
+                page_end=doc.page_end,
+                chapter=doc.chapter,
+                chunk_id=doc.chunk_id or doc.doc_id,
+                parent_chunk_id=doc.parent_chunk_id,
+                metadata={"source_type": doc.source_type, "image_refs": doc.image_refs},
+            ))
         scored.sort(key=lambda hit: (-hit.score, hit.doc_id))
         return ToolObservation(
             tool="search_documents",
@@ -78,6 +91,13 @@ class KnowledgeBase:
                         "version_date": doc.version_date,
                         "applicability": doc.applicability,
                         "content": doc.content,
+                        "page_start": doc.page_start,
+                        "page_end": doc.page_end,
+                        "chapter": doc.chapter,
+                        "chunk_id": doc.chunk_id or doc.doc_id,
+                        "parent_chunk_id": doc.parent_chunk_id,
+                        "image_refs": doc.image_refs,
+                        "source_type": doc.source_type,
                     },
                 )
         return ToolObservation("read_document", False, f"文档 {doc_id} 不存在", {"doc_id": doc_id})

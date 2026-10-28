@@ -15,8 +15,11 @@
 - 设计合成文档 D01-D05、冲突语义和上下文追问场景；
 - 调整离线决策模型，使工具观察会改变下一步动作；
 - 增加 OpenAI-compatible 适配器、故障注入、引用原文和安全状态；
+- 增加商品标准库消歧、结构感知父子 Chunk、混合检索/RRF/Top-p、可信度排序、FastAPI、Docker 以及 Milvus/MongoDB/BGE 适配层；
 - 审阅并修改 README、评估限制与所有运行记录。
 
 ## 验证方式
 
 通过 `python -m unittest discover -s tests -v` 执行验收测试，并用 CLI 重新生成 `examples/` 下的输出和 Trace。没有提交真实密钥，也没有使用真实员工资料。
+
+高级链路在未安装模型权重或未配置数据库时使用明确标注的本地降级实现；这部分验证的是接口契约、商品门控、证据引用和检索融合流程，不宣称本地 fallback 等价于 BGE/Milvus 线上效果。

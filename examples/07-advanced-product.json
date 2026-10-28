@@ -1,0 +1,19 @@
+{
+  "command": "python -m src.cli --pipeline advanced --question \"Pro X1 怎么开机\"",
+  "input": {"question": "Pro X1 怎么开机", "history": []},
+  "actual_output": {
+    "answer": "根据 M-P100-X1-P03-C01 第 3 页《2. 开机与首次配置》（Chunk M-P100-X1-P03-C01，版本 2026-05-01），长按设备侧面的电源键3秒，屏幕出现启动动画后松开。首次开机需要连接企业 Wi-Fi 并完成设备激活。",
+    "citations": [
+      {"chunk_id": "M-P100-X1-P03-C01", "page": 3, "chapter": "2. 开机与首次配置", "parent_chunk_id": "M-P100-X1-P03", "image_refs": ["images/M-P100-X1-page-03.png"]},
+      {"chunk_id": "M-P100-X1-P03-C02", "page": 3, "chapter": "2. 开机与首次配置", "parent_chunk_id": "M-P100-X1-P03", "image_refs": ["images/M-P100-X1-page-03.png"]}
+    ],
+    "status": "completed",
+    "retrieval_strategy": {"routes": ["dense", "sparse", "HyDE", "MCP"], "fusion": "RRF(k=60)", "reranker": "BGE-Reranker/fallback", "top_p": 0.85}
+  },
+  "trace": [
+    {"step": 0, "node": "resolve_product", "result": "P100-X1", "decision": "标准商品库确认型号后允许检索"},
+    {"step": 1, "action": "search", "tool": "hybrid_search", "result_summary": "dense+sparse+HyDE+MCP 并行召回，RRF 去重，BGE-Reranker 精排", "next_action": "read"},
+    {"step": 2, "action": "read", "tool": "read_chunk", "parameters": {"chunk_id": "M-P100-X1-P03-C01"}, "result_summary": "读取第 3 页原文", "next_action": "read"},
+    {"step": 3, "action": "read", "tool": "read_chunk", "parameters": {"chunk_id": "M-P100-X1-P03-C02"}, "result_summary": "读取同一父 Chunk 的图文关联片段", "next_action": "finish"}
+  ]
+}

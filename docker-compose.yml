@@ -1,0 +1,27 @@
+services:
+  api:
+    build: .
+    environment:
+      MILVUS_URI: http://milvus:19530
+      MONGODB_URI: mongodb://mongodb:27017
+      ENABLE_BGE: "0"
+    ports:
+      - "8000:8000"
+    depends_on:
+      - milvus
+      - mongodb
+
+  milvus:
+    image: milvusdb/milvus:v2.4.6
+    command: ["milvus", "run", "standalone"]
+    environment:
+      ETCD_USE_EMBED: "true"
+      COMMON_STORAGETYPE: local
+    ports:
+      - "19530:19530"
+      - "9091:9091"
+
+  mongodb:
+    image: mongo:7
+    ports:
+      - "27017:27017"

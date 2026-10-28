@@ -2,9 +2,11 @@
 
 一个面向企业制度与产品 FAQ 的可离线运行问答 Agent。它不会只做一次检索，而是由决策模型在每轮观察工具结果后选择：补充检索、读取原文、追问或结束。
 
+在原始考核链路上增加了产品知识库增强链路：LangGraph 编排商品消歧与问答，PDF 结构感知切片保留页码、标题、Layout、图片与父子 Chunk，Milvus/MongoDB/BGE-M3/BGE-Reranker/FastAPI/Docker 均有可替换适配；没有重型依赖或外部服务时自动使用本地降级实现。
+
 ## 1. 环境与运行
 
-要求 Python 3.10+。项目只使用标准库，安装依赖不是必须的：
+要求 Python 3.10+。基础离线 CLI 可仅使用标准库；API、LangGraph、数据库适配器和 PDF 解析依赖通过 `requirements.txt` 安装：
 
 ```bash
 python -m venv .venv
@@ -18,6 +20,11 @@ pip install -r requirements.txt
 ```bash
 python -m src.cli --question "报销期限多久"
 python -m src.cli --question "普通员工出差餐补标准是多少？"
+
+# 高级链路：商品消歧 + 混合检索 + 证据引用
+python -m src.cli --pipeline advanced --question "Pro X1 怎么开机"
+python -m src.cli --pipeline advanced --question "Pro 怎么开机"
+python -m src.cli --pipeline advanced --question "型号 Z9 怎么开机"
 ```
 
 输出 JSON，包含 `answer`、`citations`、`gaps`、`status` 与 `trace`。用 `--pretty` 可获得适合人工阅读的格式。
@@ -31,6 +38,23 @@ python -m src.cli --model openai --question "报销期限多久"
 ```
 
 程序不会读取或提交真实密钥；没有模型服务时请使用默认的 `offline` 入口。离线入口验证流程和规则，不等同于真实大模型效果。
+
+## 1.1 API 与 Docker
+
+安装 `requirements.txt` 后启动 API：
+
+```bash
+uvicorn src.api:app --host 0.0.0.0 --port 8000
+curl -X POST http://localhost:8000/ask -H "Content-Type: application/json" -d "{\"question\":\"Pro X1 怎么开机\"}"
+```
+
+启动 API、Milvus 和 MongoDB：
+
+```bash
+docker compose up --build
+```
+
+`requirements-ml.txt` 用于安装 BGE-M3/BGE-Reranker 权重依赖；设置 `ENABLE_BGE=1` 后启用，未设置时使用可复现的词项/哈希向量降级实现。
 
 模拟工具故障以复现容错路径：
 
@@ -59,9 +83,14 @@ python -m unittest discover -s tests -v
 
 ```text
 src/                 Agent、模型适配器、知识库工具、CLI
+src/advanced_agent.py 商品消歧、LangGraph 编排和增强链路
+src/ingestion.py     PDF 页面解析、结构感知父子 Chunk
+src/retrieval.py     BGE/Milvus 适配、混合检索、HyDE、MCP、RRF、重排、Top-p
+src/storage.py       Milvus/MongoDB 适配与本地降级
+src/api.py           FastAPI 服务入口
 tests/               可执行单元测试与验收测试
 examples/            输入、实际输出、Trace
-data/                合成知识库
+data/                合成制度、商品库和 PDF Chunk
 docs/                题目分析、方案、评估、AI 使用记录、复盘
 ```
 
@@ -71,3 +100,4 @@ docs/                题目分析、方案、评估、AI 使用记录、复盘
 - 找不到资料时会给出资料缺口和 `insufficient_evidence` 状态，不编造答案。
 - 工具错误会进入下一轮决策；连续失败或达到步数上限会返回 `incomplete`。
 - 文档是合成材料，不包含真实企业隐私。
+- 高级链路在商品型号未确认时不会执行知识库检索；多个相似型号时先返回选择项。

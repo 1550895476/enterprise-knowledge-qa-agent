@@ -3,6 +3,9 @@ import unittest
 from pathlib import Path
 
 from src.agent import KnowledgeQAAgent
+from src.advanced_agent import EnterpriseKnowledgeAgent
+from src.ingestion import ParsedPage, StructureAwareChunker
+from src.retrieval import HybridRetriever
 from src.tools import KnowledgeBase
 
 
@@ -71,6 +74,41 @@ class ToolTests(unittest.TestCase):
         self.assertEqual(len(docs), 5)
         self.assertTrue(all(item["doc_id"].startswith("D") for item in docs))
         self.assertEqual(len(KnowledgeBase(path).documents), 5)
+
+    def test_structure_aware_chunking_keeps_parent_page_and_image(self):
+        chunks = StructureAwareChunker(max_chars=80).chunk(
+            [ParsedPage(3, "2. 开机\n\n长按电源键3秒。\n\n见下图。", "2. 开机", [{"bbox": [1, 2, 3, 4]}], ["images/p3.png"])],
+            "M-TEST", "测试手册", "2026-01-01", "2026-01-02", "测试型号",
+        )
+        self.assertTrue(chunks)
+        self.assertEqual(chunks[0].page_start, 3)
+        self.assertEqual(chunks[0].parent_chunk_id, "M-TEST-P003")
+
+    def test_hybrid_retrieval_returns_routes_and_metadata(self):
+        root = Path(__file__).parents[1]
+        result = HybridRetriever(root / "data" / "chunks.json").retrieve("Pro X1 怎么开机", product_id="P100-X1")
+        self.assertTrue(result.candidates)
+        self.assertIn("RRF(k=60)", result.strategy["fusion"])
+        self.assertTrue(result.candidates[0]["retrieval_routes"])
+        self.assertIn("page_start", result.candidates[0])
+
+    def test_advanced_pipeline_resolves_product_before_retrieval(self):
+        agent = EnterpriseKnowledgeAgent()
+        resolved = agent.run("Pro X1 怎么开机")
+        self.assertEqual(resolved.status, "completed")
+        self.assertIn("3秒", resolved.answer)
+        self.assertEqual(resolved.citations[0]["page_start"], 3)
+        self.assertTrue(resolved.citations[0]["chunk_id"].startswith("M-P100-X1"))
+
+        ambiguous = agent.run("Pro 怎么开机")
+        self.assertEqual(ambiguous.status, "needs_confirmation")
+        self.assertFalse(any(event.tool for event in ambiguous.trace))
+        self.assertIn("Pro X1", ambiguous.answer)
+
+        unresolved = agent.run("型号 Z9 怎么开机")
+        self.assertEqual(unresolved.status, "needs_confirmation")
+        self.assertEqual(unresolved.citations, [])
+        self.assertFalse(any(event.tool for event in unresolved.trace))
 
 
 if __name__ == "__main__":

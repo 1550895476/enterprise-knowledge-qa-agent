@@ -15,6 +15,13 @@ class Document:
     applicability: str
     content: str
     tags: list[str] = field(default_factory=list)
+    page_start: int = 1
+    page_end: int = 1
+    chapter: str = ""
+    chunk_id: str = ""
+    parent_chunk_id: str | None = None
+    image_refs: list[str] = field(default_factory=list)
+    source_type: str = "faq"
 
 
 @dataclass(frozen=True)
@@ -25,6 +32,12 @@ class SearchHit:
     applicability: str
     snippet: str
     score: float
+    page_start: int = 1
+    page_end: int = 1
+    chapter: str = ""
+    chunk_id: str = ""
+    parent_chunk_id: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

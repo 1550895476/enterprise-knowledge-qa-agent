@@ -1,0 +1,20 @@
+[
+  {
+    "product_id": "P100-X1",
+    "canonical_name": "影像终端 Pro X1",
+    "aliases": ["Pro X1", "X1", "终端X1"],
+    "manual_doc_ids": ["M-P100-X1"]
+  },
+  {
+    "product_id": "P100-X2",
+    "canonical_name": "影像终端 Pro X2",
+    "aliases": ["Pro X2", "X2", "终端X2"],
+    "manual_doc_ids": ["M-P100-X2"]
+  },
+  {
+    "product_id": "P200",
+    "canonical_name": "影像终端 Lite P200",
+    "aliases": ["P200", "Lite P200"],
+    "manual_doc_ids": ["M-P200"]
+  }
+]

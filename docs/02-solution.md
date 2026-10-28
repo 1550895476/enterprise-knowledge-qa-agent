@@ -30,3 +30,15 @@
 - 不使用多 Agent：题目重点是单 Agent 的动态决策，多 Agent 会增加噪声而不增加验收覆盖；
 - JSON Trace：便于评审复制运行、替换文档并对比动作变化；
 - `max_steps=6`：防止真实模型或工具异常时无限循环。
+
+## 增强链路：商品知识库
+
+`src/advanced_agent.py` 提供第二条 LangGraph 链路：
+
+1. `ProductMatcher` 结合历史会话识别商品别名，并与 `data/products.json` 标准商品库匹配；多个相似型号返回选择项，出现型号语义但无法确认时直接追问，不调用检索。
+2. `StructureAwareChunker` 按 PDF 页、标题层级、Layout 坐标和图片引用生成父 Chunk/子 Chunk；过短文本可在切片阶段合并，图片通过 `image_refs` 保留，图片摘要器可注入真实多模态模型。
+3. `HybridRetriever` 并行计算稠密、稀疏、HyDE 和 MCP 路线，使用 RRF 去重，再由 BGE-Reranker 精排，按累计概率动态截取 Top-p。
+4. 每个候选同时携带版本日期、发布时间、适用范围、页码、章节、父子 Chunk ID 和图片路径。可信度用于排序但不能覆盖正文冲突；冲突检测返回事实、不同值和 Chunk ID。
+5. `MilvusVectorStore`、`MongoTraceStore` 在配置连接串时接入真实服务，否则保留相同接口的内存实现。`requirements-ml.txt` 启用 BGE-M3/BGE-Reranker 权重。
+
+这条链路复用原有 Agent 的“模型动作—工具—观察—下一动作”循环，因此搜索候选不会直接成为答案，必须读取 Chunk 原文后再生成引用。

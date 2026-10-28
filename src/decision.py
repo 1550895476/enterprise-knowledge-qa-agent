@@ -39,7 +39,7 @@ class OfflineDecisionModel(DecisionModel):
             query = self._contextual_query(question, history)
             return Action("search", query=query, reason="先检索与当前问题及上下文相关的文档")
 
-        if observation.tool == "search_documents":
+        if observation.tool in {"search_documents", "hybrid_search"}:
             if not observation.ok:
                 if search_count < 2:
                     return Action("search", query=self._broaden(question), reason="检索工具可重试，改写查询后再次检索")
@@ -53,7 +53,7 @@ class OfflineDecisionModel(DecisionModel):
                 return Action("read", doc_id=unread[0], reason="检索摘要不足以核对适用范围和原文，读取首个候选")
             return self._finalize(state, reason="已有足够原文证据")
 
-        if observation.tool == "read_document":
+        if observation.tool in {"read_document", "read_chunk"}:
             if not observation.ok:
                 if failures < 2 and hits:
                     unread = [hit["doc_id"] for hit in hits if hit["doc_id"] not in {item["doc_id"] for item in readings}]
