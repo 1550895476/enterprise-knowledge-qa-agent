@@ -59,7 +59,8 @@
     .btn-primary:hover:not(:disabled) { background: #5eead4; transform: translateY(-1px); }
     .btn-ghost { background: transparent; color: #b8d5d1; border: 1px solid rgba(255,255,255,.13); }
     .btn-wide { width: 100%; }
-    .button-row { display: grid; grid-template-columns: .9fr 1.1fr; gap: 8px; }
+    .button-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+    .button-row .btn { padding-left: 7px; padding-right: 7px; font-size: 11px; }
     .test-result { display: none; margin-top: 10px; border-radius: 10px; padding: 9px 10px; font-size: 10px; line-height: 1.55; background: rgba(52,211,153,.1); border: 1px solid rgba(52,211,153,.22); color: #bdf8dd; overflow-wrap: anywhere; }
     .test-result.show { display: block; }
     .test-result.error { background: rgba(248,113,113,.1); border-color: rgba(248,113,113,.25); color: #fecaca; }
@@ -146,11 +147,11 @@
         <div class="field"><label for="provider">决策模型</label><select id="provider"><option value="offline">离线决策模型</option><option value="openai">OpenAI-compatible / 中转站</option><option value="deepseek">DeepSeek</option></select></div>
         <div id="remoteFields">
           <div class="field"><label for="baseUrl">Base URL</label><input id="baseUrl" value="https://api.openai.com/v1"></div>
-          <div class="field"><label for="modelName">模型名称</label><input id="modelName" value="gpt-4o-mini"></div>
+          <div class="field"><label for="modelName">模型名称</label><input id="modelName" list="modelOptions" value="gpt-4o-mini" autocomplete="off"><datalist id="modelOptions"></datalist></div>
           <div class="field"><label for="apiKey">API Key</label><input id="apiKey" type="password" autocomplete="new-password" placeholder="已配置时可留空"></div>
           <div class="hint">密钥仅保存在当前服务进程内存，不写入文件。</div>
         </div>
-        <div class="button-row"><button id="testModel" class="btn btn-ghost">测试连接</button><button id="saveModel" class="btn btn-primary">保存并使用</button></div>
+        <div class="button-row"><button id="fetchModels" class="btn btn-ghost">获取模型</button><button id="testModel" class="btn btn-ghost">测试连接</button><button id="saveModel" class="btn btn-primary">保存使用</button></div>
         <div id="testResult" class="test-result"></div>
       </section>
 
@@ -232,6 +233,7 @@
       el('remoteFields').style.display = remote ? 'block' : 'none';
       el('modelBadge').textContent = el('provider').value === 'deepseek' ? 'DeepSeek' : (remote ? '兼容接口' : '离线模式');
       el('testResult').className = 'test-result';
+      el('modelOptions').replaceChildren();
     }
 
     function applyProviderPreset() {
@@ -269,7 +271,23 @@
         el('apiKey').value = ''; el('apiKey').placeholder = data.api_key_configured ? '已配置，留空保持不变' : '请输入 API Key';
         toast(data.provider === 'offline' ? '已切换到离线决策模型' : `已配置模型 ${data.model}`);
       } catch (error) { toast(error.message, true); }
-      finally { button.disabled = false; button.textContent = '保存并使用'; }
+      finally { button.disabled = false; button.textContent = '保存使用'; }
+    }
+
+    async function fetchModels() {
+      const button = el('fetchModels'); const result = el('testResult');
+      button.disabled = true; button.textContent = '获取中…'; result.className = 'test-result';
+      try {
+        const data = await api('/config/model/models', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(modelPayload()) });
+        const list = el('modelOptions'); list.replaceChildren();
+        (data.models || []).forEach(model => { const option=document.createElement('option'); option.value=model; list.appendChild(option); });
+        if (data.models?.length && !data.models.includes(el('modelName').value)) el('modelName').value = data.models[0];
+        result.className = `test-result show${data.ok ? '' : ' error'}`;
+        result.textContent = data.ok
+          ? `获取到 ${data.count} 个模型 · ${data.latency_ms} ms · 点击“模型名称”选择后再测试`
+          : `获取失败${data.http_status ? ` (HTTP ${data.http_status})` : ''} · ${data.message}。可继续手动填写模型名。`;
+      } catch (error) { result.className='test-result show error'; result.textContent=`获取模型失败：${error.message}。可继续手动填写模型名。`; }
+      finally { button.disabled=false; button.textContent='获取模型'; }
     }
 
     async function testModel() {
@@ -376,6 +394,7 @@
     }
 
     el('provider').addEventListener('change', applyProviderPreset);
+    el('fetchModels').addEventListener('click', fetchModels);
     el('testModel').addEventListener('click', testModel);
     el('saveModel').addEventListener('click', saveModel);
     el('refreshDocs').addEventListener('click', loadDocuments);

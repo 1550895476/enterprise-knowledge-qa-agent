@@ -50,7 +50,7 @@ class RuntimeModelConfig:
     def update(self, provider: str, model: str, base_url: str, api_key: str | None = None) -> dict[str, Any]:
         provider = provider.strip().lower()
         model = model.strip()
-        base_url = base_url.strip().rstrip("/")
+        base_url = self._normalize_base_url(base_url)
         if provider not in {"offline", "openai", "deepseek"}:
             raise ModelConfigError("provider 仅支持 offline、openai 或 deepseek")
         if provider != "offline":
@@ -84,7 +84,7 @@ class RuntimeModelConfig:
         if provider not in {"openai", "deepseek"}:
             raise ModelConfigError("仅支持 OpenAI-compatible 或 DeepSeek 连通性测试")
         model = model.strip()
-        base_url = base_url.strip().rstrip("/")
+        base_url = self._normalize_base_url(base_url)
         parsed = urlparse(base_url)
         if not model:
             raise ModelConfigError("必须填写模型名称")
@@ -130,6 +130,59 @@ class RuntimeModelConfig:
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
             return {"ok": False, "provider": provider, "model": model, "base_url": base_url, "latency_ms": round((time.perf_counter() - started) * 1000), "http_status": None, "message": f"连接失败：{getattr(exc, 'reason', str(exc))}"}
 
+    def list_models(
+        self,
+        provider: str,
+        base_url: str,
+        api_key: str | None = None,
+        timeout_seconds: int = 20,
+    ) -> dict[str, Any]:
+        provider = provider.strip().lower()
+        if provider == "offline":
+            return {"ok": True, "provider": "offline", "models": ["offline"], "count": 1, "latency_ms": 0}
+        if provider not in {"openai", "deepseek"}:
+            raise ModelConfigError("仅支持 OpenAI-compatible 或 DeepSeek 模型发现")
+        base_url = self._normalize_base_url(base_url)
+        parsed = urlparse(base_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ModelConfigError("Base URL 必须是有效的 HTTP(S) 地址")
+        with self._lock:
+            fallback_key = self._config.api_key
+        key = api_key.strip() if api_key and api_key.strip() else fallback_key
+        if not key:
+            raise ModelConfigError("获取模型列表必须填写 API Key")
+
+        request = urllib.request.Request(
+            f"{base_url}/models",
+            headers={"Authorization": f"Bearer {key}", "Accept": "application/json"},
+            method="GET",
+        )
+        started = time.perf_counter()
+        try:
+            with urllib.request.urlopen(request, timeout=max(3, min(timeout_seconds, 60))) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+                rows = payload.get("data", payload.get("models", [])) if isinstance(payload, dict) else []
+                model_ids = []
+                for row in rows:
+                    value = row.get("id") or row.get("model") or row.get("name") if isinstance(row, dict) else row
+                    if value:
+                        model_ids.append(str(value))
+                models = sorted(set(model_ids), key=str.lower)
+                return {
+                    "ok": True,
+                    "provider": provider,
+                    "base_url": base_url,
+                    "models": models,
+                    "count": len(models),
+                    "latency_ms": round((time.perf_counter() - started) * 1000),
+                    "http_status": response.status,
+                    "message": "模型列表获取成功" if models else "接口请求成功，但没有返回模型 ID",
+                }
+        except urllib.error.HTTPError as exc:
+            return {"ok": False, "provider": provider, "base_url": base_url, "models": [], "count": 0, "latency_ms": round((time.perf_counter() - started) * 1000), "http_status": exc.code, "message": self._safe_error_message(exc)}
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+            return {"ok": False, "provider": provider, "base_url": base_url, "models": [], "count": 0, "latency_ms": round((time.perf_counter() - started) * 1000), "http_status": None, "message": f"获取模型列表失败：{getattr(exc, 'reason', str(exc))}"}
+
     def _safe_error_message(self, error: urllib.error.HTTPError) -> str:
         try:
             payload = json.loads(error.read().decode("utf-8"))
@@ -139,6 +192,13 @@ class RuntimeModelConfig:
             return str(detail)[:300]
         except Exception:
             return f"远端返回 HTTP {error.code}"
+
+    def _normalize_base_url(self, value: str) -> str:
+        base_url = value.strip().rstrip("/")
+        for suffix in ("/chat/completions", "/models"):
+            if base_url.endswith(suffix):
+                return base_url[:-len(suffix)].rstrip("/")
+        return base_url
 
     def build_model(self) -> DecisionModel:
         with self._lock:

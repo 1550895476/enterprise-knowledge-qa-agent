@@ -57,6 +57,13 @@ if FastAPI is not None:
         except ModelConfigError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    @app.post("/config/model/models")
+    def list_available_models(request: ModelConfigRequest) -> dict[str, Any]:
+        try:
+            return model_config.list_models(request.provider, request.base_url, request.api_key)
+        except ModelConfigError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @app.get("/health")
     def health() -> dict[str, Any]:
         return {

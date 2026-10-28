@@ -57,6 +57,28 @@ class WebInterfaceTests(unittest.TestCase):
         request = mocked.call_args.args[0]
         self.assertEqual(request.full_url, "https://api.deepseek.com/chat/completions")
 
+    def test_model_discovery_lists_relay_models(self):
+        class FakeResponse:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return b'{"object":"list","data":[{"id":"gpt-4o-mini"},{"id":"deepseek-chat"},{"id":"gpt-4o-mini"}]}'
+
+        with patch("urllib.request.urlopen", return_value=FakeResponse()) as mocked:
+            result = RuntimeModelConfig().list_models(
+                "openai", "https://relay.example.com/v1/chat/completions", "test-key"
+            )
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["models"], ["deepseek-chat", "gpt-4o-mini"])
+        request = mocked.call_args.args[0]
+        self.assertEqual(request.full_url, "https://relay.example.com/v1/models")
+
 
 if __name__ == "__main__":
     unittest.main()

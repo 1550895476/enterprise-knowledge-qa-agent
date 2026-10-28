@@ -64,3 +64,5 @@ multipart 文件 → 类型/大小/PDF 头校验 → 隔离保存
 在线模型负责检索动作与证据回答，Prompt 要求只能使用已读取的 `readings`，并引用文档 ID、页码、章节和 Chunk ID。离线模式继续使用可复现的证据生成器。
 
 模型配置旁提供独立连通性测试。测试不会修改当前生效配置，而是向 `<base_url>/chat/completions` 发送最小 `ping` 请求，返回成功状态、实际模型名、HTTP 状态、延迟和截断后的响应摘要；错误响应经过脱敏，不返回 API Key。除通用 OpenAI-compatible 中转站外，界面提供可编辑的 DeepSeek 预设。
+
+模型发现模块使用 Bearer Token 请求标准 `GET <base_url>/models`，兼容返回 `data[].id`、`models[].id/name/model` 等常见中转站格式，去重排序后填充模型名称建议列表。用户选择某个模型后再调用连通性测试；不支持模型列表接口的中转站可继续手动输入。
