@@ -4,6 +4,7 @@ from typing import Any
 
 try:
     from fastapi import FastAPI, File, HTTPException, UploadFile
+    from fastapi.responses import RedirectResponse
     from pydantic import BaseModel, Field
 except ImportError:  # pragma: no cover - keeps the offline CLI dependency-free
     FastAPI = None
@@ -23,6 +24,10 @@ if FastAPI is not None:
         history: list[dict[str, str]] = Field(default_factory=list)
         product_choice: str | None = None
         document_ids: list[str] = Field(default_factory=list)
+
+    @app.get("/", include_in_schema=False)
+    def root() -> RedirectResponse:
+        return RedirectResponse(url="/docs")
 
     @app.get("/health")
     def health() -> dict[str, Any]:
