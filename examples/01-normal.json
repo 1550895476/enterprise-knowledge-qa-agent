@@ -1,0 +1,15 @@
+{
+  "command": "python -m src.cli --question \"密码忘了怎么办\"",
+  "input": {"question": "密码忘了怎么办", "history": []},
+  "actual_output": {
+    "answer": "根据 D04（账号与密码 FAQ，版本日期 2026-02-20），忘记登录密码时，可在登录页点击‘忘记密码’，通过绑定手机完成重置；仍无法操作时联系 IT 服务台。",
+    "citations": ["D04"],
+    "gaps": [],
+    "status": "completed"
+  },
+  "trace": [
+    {"step": 1, "action": "search", "tool": "search_documents", "parameters": {"query": "密码忘了怎么办"}, "result_summary": "命中 1 份文档", "next_action": "read", "decision_basis": "检索摘要不足以核对适用范围和原文，读取首个候选"},
+    {"step": 2, "action": "read", "tool": "read_document", "parameters": {"doc_id": "D04"}, "result_summary": "已读取 D04 原文片段", "next_action": "finish", "decision_basis": "读取结果已足以回答或说明资料缺口"},
+    {"step": 3, "action": "finish", "tool": null, "parameters": {}, "result_summary": "未调用工具", "next_action": null, "decision_basis": "读取结果已足以回答或说明资料缺口"}
+  ]
+}

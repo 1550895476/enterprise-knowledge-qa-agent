@@ -1,0 +1,2 @@
+# Runtime uses Python standard library only.
+# Optional live model calls use urllib and do not require an SDK.

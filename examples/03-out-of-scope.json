@@ -1,0 +1,15 @@
+{
+  "command": "python -m src.cli --question \"公司附近地铁几点停运\"",
+  "input": {"question": "公司附近地铁几点停运", "history": []},
+  "actual_output": {
+    "answer": "当前知识库没有找到足以回答该问题的资料。",
+    "citations": [],
+    "gaps": ["缺少覆盖该问题的制度或 FAQ"],
+    "status": "insufficient_evidence"
+  },
+  "trace": [
+    {"step": 1, "action": "search", "tool": "search_documents", "parameters": {"query": "公司附近地铁几点停运"}, "result_summary": "命中 0 份文档", "next_action": "search", "decision_basis": "首轮无命中，去除限定词并补充同义词检索"},
+    {"step": 2, "action": "search", "tool": "search_documents", "parameters": {"query": "公司附近地铁几点停运 相关"}, "result_summary": "命中 0 份文档", "next_action": "finish", "decision_basis": "补充检索后仍无可靠资料"},
+    {"step": 3, "action": "finish", "tool": null, "parameters": {}, "result_summary": "未调用工具", "next_action": null, "decision_basis": "补充检索后仍无可靠资料"}
+  ]
+}

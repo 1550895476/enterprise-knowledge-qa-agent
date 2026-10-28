@@ -1,0 +1,16 @@
+{
+  "command": "python -m src.cli --question \"费用报账要在多长时间内提交\"",
+  "input": {"question": "费用报账要在多长时间内提交", "history": []},
+  "actual_output": {
+    "answer": "资料存在冲突：不同文档给出了不同规定，且当前资料没有明确适用范围或优先级。请确认你适用的制度、组织范围或生效版本后再确定答案。",
+    "citations": ["D01", "D02"],
+    "gaps": ["需要确认适用范围与制度优先级"],
+    "status": "needs_confirmation"
+  },
+  "trace": [
+    {"step": 1, "action": "search", "tool": "search_documents", "parameters": {"query": "费用报账要在多长时间内提交"}, "result_summary": "命中 2 份文档", "next_action": "read", "decision_basis": "检索摘要不足以核对适用范围和原文，读取首个候选"},
+    {"step": 2, "action": "read", "tool": "read_document", "parameters": {"doc_id": "D01"}, "result_summary": "已读取 D01 原文片段", "next_action": "read", "decision_basis": "已发现多个可能适用的文档，继续读取以检查冲突"},
+    {"step": 3, "action": "read", "tool": "read_document", "parameters": {"doc_id": "D02"}, "result_summary": "已读取 D02 原文片段", "next_action": "ask", "decision_basis": "原文中的关键数值或结论互相冲突，不能擅自择一"},
+    {"step": 4, "action": "ask", "tool": null, "parameters": {}, "result_summary": "未调用工具", "next_action": null, "decision_basis": "原文中的关键数值或结论互相冲突，不能擅自择一"}
+  ]
+}

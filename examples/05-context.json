@@ -1,0 +1,21 @@
+{
+  "command": "python -m src.cli --question \"那研发员工呢？\" --history-file examples/05-context-history.json",
+  "input": {
+    "question": "那研发员工呢？",
+    "history": [
+      {"role": "user", "content": "普通员工国内出差餐补标准是多少？"},
+      {"role": "assistant", "content": "普通员工是100元/天。"}
+    ]
+  },
+  "actual_output": {
+    "answer": "根据 D05（研发人员差旅管理细则，版本日期 2026-04-01），研发员工国内出差的餐补标准为150元/天，按实际出差天数计算。",
+    "citations": ["D05"],
+    "gaps": [],
+    "status": "completed"
+  },
+  "trace": [
+    {"step": 1, "action": "search", "tool": "search_documents", "parameters": {"query": "国内出差餐补标准是多少？ 是100元/天。 那研发员工呢？"}, "result_summary": "命中 2 份文档", "next_action": "read", "decision_basis": "检索摘要不足以核对适用范围和原文，读取首个候选"},
+    {"step": 2, "action": "read", "tool": "read_document", "parameters": {"doc_id": "D05"}, "result_summary": "已读取 D05 原文片段", "next_action": "finish", "decision_basis": "读取结果已足以回答或说明资料缺口"},
+    {"step": 3, "action": "finish", "tool": null, "parameters": {}, "result_summary": "未调用工具", "next_action": null, "decision_basis": "读取结果已足以回答或说明资料缺口"}
+  ]
+}
