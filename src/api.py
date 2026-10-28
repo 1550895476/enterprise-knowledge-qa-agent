@@ -34,6 +34,9 @@ if FastAPI is not None:
         model: str = "gpt-4o-mini"
         base_url: str = "https://api.openai.com/v1"
         api_key: str | None = None
+        protocol: str = "chat_completions"
+        reasoning_effort: str = "none"
+        response_format: str = "json_object"
 
     @app.get("/", include_in_schema=False)
     def root() -> FileResponse:
@@ -46,14 +49,30 @@ if FastAPI is not None:
     @app.put("/config/model")
     def update_model_config(request: ModelConfigRequest) -> dict[str, Any]:
         try:
-            return model_config.update(request.provider, request.model, request.base_url, request.api_key)
+            return model_config.update(
+                request.provider,
+                request.model,
+                request.base_url,
+                request.api_key,
+                request.protocol,
+                request.reasoning_effort,
+                request.response_format,
+            )
         except ModelConfigError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/config/model/test")
     def test_model_config(request: ModelConfigRequest) -> dict[str, Any]:
         try:
-            return model_config.test_connection(request.provider, request.model, request.base_url, request.api_key)
+            return model_config.test_connection(
+                request.provider,
+                request.model,
+                request.base_url,
+                request.api_key,
+                protocol=request.protocol,
+                reasoning_effort=request.reasoning_effort,
+                response_format=request.response_format,
+            )
         except ModelConfigError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

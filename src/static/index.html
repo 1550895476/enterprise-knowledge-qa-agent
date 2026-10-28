@@ -82,6 +82,46 @@
     .empty-docs { color: #7fa5a1; font-size: 11px; padding: 8px 0; text-align: center; }
     .side-footer { color: #6f9793; font-size: 10px; line-height: 1.55; padding: 3px 4px; }
     .side-footer a { color: #8fe5da; text-decoration: none; }
+    .model-summary { display: grid; gap: 9px; }
+    .model-summary-main { font-size: 13px; color: #f3fffd; font-weight: 700; overflow-wrap: anywhere; }
+    .model-summary-meta { color: #8eb4b0; font-size: 10px; line-height: 1.5; }
+
+    .model-modal {
+      position: fixed; inset: 0; z-index: 40; display: none; align-items: center; justify-content: center;
+      padding: 22px; background: rgba(3, 9, 24, .72); backdrop-filter: blur(8px);
+    }
+    .model-modal.open { display: flex; }
+    .model-dialog {
+      width: min(790px, 100%); max-height: calc(100vh - 44px); overflow-y: auto; color: #edf3ff;
+      background: #0b1732; border: 1px solid #27446e; border-radius: 18px;
+      box-shadow: 0 28px 80px rgba(0,0,0,.42); padding: 23px;
+    }
+    .model-dialog-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 18px; margin-bottom: 19px; }
+    .model-dialog-head h2 { margin: 0 0 6px; font-size: 21px; letter-spacing: -.02em; }
+    .model-dialog-head p { margin: 0; color: #9eb0cd; font-size: 11px; line-height: 1.55; }
+    .modal-close { width: 34px; height: 34px; border: 1px solid #284268; border-radius: 10px; background: #101f3f; color: #c7d5eb; font-size: 19px; }
+    .model-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 16px; }
+    .model-field { min-width: 0; }
+    .model-field.full { grid-column: 1 / -1; }
+    .model-field label { display: block; margin-bottom: 7px; color: #aebddb; font-size: 11px; }
+    .model-field input, .model-field select {
+      width: 100%; min-height: 39px; border: 1px solid #243c63; border-radius: 10px;
+      background: #09152e; color: #f4f7ff; padding: 9px 12px; outline: none;
+    }
+    .model-field input:focus, .model-field select:focus { border-color: #5bbdf2; box-shadow: 0 0 0 3px rgba(91,189,242,.12); }
+    .model-field input::placeholder { color: #637493; }
+    .model-help { color: #8296b7; font-size: 10px; line-height: 1.5; margin-top: 6px; }
+    .model-status {
+      margin-top: 14px; min-height: 39px; display: flex; align-items: center; border: 1px solid #243c63;
+      border-radius: 10px; padding: 10px 12px; color: #aabbd7; background: #0a1732; font-size: 11px; line-height: 1.5;
+    }
+    .model-status.success { color: #b8f6df; border-color: rgba(52,211,153,.38); background: rgba(16,87,73,.25); }
+    .model-status.error { color: #ffd1d1; border-color: rgba(248,113,113,.38); background: rgba(104,31,45,.25); }
+    .model-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 9px; margin-top: 14px; }
+    .model-actions .btn { color: #d9e4f7; border: 1px solid #29456f; background: #101f3e; }
+    .model-actions .btn:hover:not(:disabled) { border-color: #4b6f9e; background: #15294e; }
+    .model-actions .btn-primary { color: #eaf6ff; border-color: #2f659e; background: #285b91; }
+    .model-actions .btn-primary:hover:not(:disabled) { background: #3474b4; }
 
     .workspace { height: 100vh; display: flex; flex-direction: column; min-width: 0; }
     .topbar { height: 72px; display: flex; align-items: center; justify-content: space-between; padding: 0 30px; background: rgba(255,255,255,.86); border-bottom: 1px solid var(--line); backdrop-filter: blur(12px); }
@@ -130,6 +170,9 @@
       .suggestions { grid-template-columns: 1fr; }
       .topbar { padding: 0 18px; }
       .messages, .composer-wrap { padding-left: 15px; padding-right: 15px; }
+      .model-grid { grid-template-columns: 1fr; }
+      .model-field.full { grid-column: auto; }
+      .model-actions .btn { flex: 1 1 calc(50% - 9px); }
     }
   </style>
 </head>
@@ -143,16 +186,12 @@
       <div class="service-status"><span id="healthDot" class="dot"></span><span id="healthText">正在连接服务…</span></div>
 
       <section class="side-card">
-        <div class="side-title"><h2>模型配置</h2><span id="modelBadge" class="badge">离线模式</span></div>
-        <div class="field"><label for="provider">决策模型</label><select id="provider"><option value="offline">离线决策模型</option><option value="openai">OpenAI-compatible / 中转站</option><option value="deepseek">DeepSeek</option></select></div>
-        <div id="remoteFields">
-          <div class="field"><label for="baseUrl">Base URL</label><input id="baseUrl" value="https://api.openai.com/v1"></div>
-          <div class="field"><label for="modelName">模型名称</label><input id="modelName" list="modelOptions" value="gpt-4o-mini" autocomplete="off"><datalist id="modelOptions"></datalist></div>
-          <div class="field"><label for="apiKey">API Key</label><input id="apiKey" type="password" autocomplete="new-password" placeholder="已配置时可留空"></div>
-          <div class="hint">密钥仅保存在当前服务进程内存，不写入文件。</div>
+        <div class="side-title"><h2>问答模型</h2><span id="modelBadge" class="badge">离线模式</span></div>
+        <div class="model-summary">
+          <div id="activeModelLabel" class="model-summary-main">正在读取配置…</div>
+          <div id="activeModelMeta" class="model-summary-meta">配置只在当前服务运行期间生效</div>
+          <button id="openModelConfig" class="btn btn-ghost btn-wide" type="button">配置 / 切换模型</button>
         </div>
-        <div class="button-row"><button id="fetchModels" class="btn btn-ghost">获取模型</button><button id="testModel" class="btn btn-ghost">测试连接</button><button id="saveModel" class="btn btn-primary">保存使用</button></div>
-        <div id="testResult" class="test-result"></div>
       </section>
 
       <section class="side-card">
@@ -200,8 +239,63 @@
   </div>
   <div id="toast" class="toast"></div>
 
+  <div id="modelModal" class="model-modal" aria-hidden="true">
+    <section class="model-dialog" role="dialog" aria-modal="true" aria-labelledby="modelDialogTitle">
+      <div class="model-dialog-head">
+        <div>
+          <h2 id="modelDialogTitle">切换问答模型</h2>
+          <p>先测试候选配置，成功后才能启用。API Key 仅发送到所填地址并保存在运行内存中，重启服务后恢复 .env 配置。</p>
+        </div>
+        <button id="closeModelConfig" class="modal-close" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="model-grid">
+        <div class="model-field">
+          <label for="provider">Provider</label>
+          <select id="provider">
+            <option value="offline">本地离线模型</option>
+            <option value="deepseek">DeepSeek 官方</option>
+            <option value="openai">OpenAI 官方</option>
+            <option value="custom">OpenAI-compatible 中转站</option>
+          </select>
+        </div>
+        <div class="model-field remote-only">
+          <label for="protocol">接口协议</label>
+          <select id="protocol"><option value="responses">Responses API</option><option value="chat_completions">Chat Completions</option></select>
+        </div>
+        <div class="model-field remote-only">
+          <label for="baseUrl">Base URL</label>
+          <input id="baseUrl" value="https://api.openai.com/v1" autocomplete="url">
+        </div>
+        <div class="model-field remote-only">
+          <label for="apiKey">API Key</label>
+          <input id="apiKey" type="password" autocomplete="new-password" placeholder="已配置时可留空">
+          <div class="model-help">不会写入仓库、浏览器存储或日志。</div>
+        </div>
+        <div class="model-field remote-only">
+          <label for="modelName">从可用列表选择模型</label>
+          <input id="modelName" list="modelOptions" value="gpt-4o-mini" autocomplete="off"><datalist id="modelOptions"></datalist>
+        </div>
+        <div class="model-field remote-only">
+          <label for="reasoningEffort">推理强度</label>
+          <select id="reasoningEffort"><option value="none">不指定（兼容性优先）</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="max">max</option></select>
+        </div>
+        <div class="model-field remote-only full">
+          <label for="responseFormat">结构化输出</label>
+          <select id="responseFormat"><option value="json_object">JSON Object（兼容性优先）</option><option value="text">Plain Text</option></select>
+        </div>
+      </div>
+      <div id="testResult" class="model-status">正在读取当前模型配置…</div>
+      <div class="model-actions">
+        <button id="cancelModelConfig" class="btn" type="button">取消</button>
+        <button id="fetchModels" class="btn" type="button">读取可用模型</button>
+        <button id="testModel" class="btn" type="button">测试所选模型</button>
+        <button id="saveModel" class="btn btn-primary" type="button" disabled>启用该模型</button>
+      </div>
+    </section>
+  </div>
+
   <script>
-    const state = { documents: [], selected: new Set(), history: [], selectedFile: null, sending: false };
+    const state = { documents: [], selected: new Set(), history: [], selectedFile: null, sending: false, activeModel: null, testedModelSignature: '' };
     const el = id => document.getElementById(id);
 
     function toast(message, error = false) {
@@ -230,26 +324,91 @@
 
     function toggleModelFields() {
       const remote = el('provider').value !== 'offline';
-      el('remoteFields').style.display = remote ? 'block' : 'none';
-      el('modelBadge').textContent = el('provider').value === 'deepseek' ? 'DeepSeek' : (remote ? '兼容接口' : '离线模式');
-      el('testResult').className = 'test-result';
+      document.querySelectorAll('.remote-only').forEach(node => node.style.display = remote ? 'block' : 'none');
+      el('fetchModels').disabled = !remote;
       el('modelOptions').replaceChildren();
+      updateModelStatus();
     }
 
     function applyProviderPreset() {
       const provider = el('provider').value;
+      invalidateModelTest();
       if (provider === 'deepseek') {
         el('baseUrl').value = 'https://api.deepseek.com';
-        el('modelName').value = 'deepseek-flash';
-      } else if (provider === 'openai' && el('baseUrl').value.includes('api.deepseek.com')) {
+        el('modelName').value = 'deepseek-v4-pro';
+        el('protocol').value = 'responses';
+        el('reasoningEffort').value = 'low';
+      } else if (provider === 'openai') {
         el('baseUrl').value = 'https://api.openai.com/v1';
-        if (el('modelName').value.startsWith('deepseek-')) el('modelName').value = 'gpt-4o-mini';
+        el('modelName').value = 'gpt-4o-mini';
+        el('protocol').value = 'responses';
+        el('reasoningEffort').value = 'none';
+      } else if (provider === 'custom') {
+        if (/api\.(openai|deepseek)\.com/.test(el('baseUrl').value)) el('baseUrl').value = 'https://your-relay.example.com/v1';
+        el('protocol').value = 'chat_completions';
+        el('reasoningEffort').value = 'none';
       }
       toggleModelFields();
     }
 
     function modelPayload() {
-      return { provider: el('provider').value, base_url: el('baseUrl').value, model: el('modelName').value, api_key: el('apiKey').value || null };
+      const provider = el('provider').value;
+      return {
+        provider,
+        base_url: el('baseUrl').value,
+        model: provider === 'offline' ? 'offline' : el('modelName').value,
+        api_key: el('apiKey').value || null,
+        protocol: provider === 'offline' ? 'chat_completions' : el('protocol').value,
+        reasoning_effort: provider === 'offline' ? 'none' : el('reasoningEffort').value,
+        response_format: provider === 'offline' ? 'json_object' : el('responseFormat').value,
+      };
+    }
+
+    function modelSignature() {
+      const payload = modelPayload();
+      return JSON.stringify({ ...payload, api_key: payload.api_key ? 'provided' : 'stored-or-empty' });
+    }
+
+    function invalidateModelTest() {
+      state.testedModelSignature = '';
+      el('saveModel').disabled = true;
+    }
+
+    function providerLabel(provider) {
+      return { offline:'本地离线', deepseek:'DeepSeek', openai:'OpenAI', custom:'中转站' }[provider] || provider;
+    }
+
+    function protocolLabel(protocol) { return protocol === 'responses' ? 'Responses API' : 'Chat Completions'; }
+
+    function renderModelSummary(data) {
+      state.activeModel = data;
+      const offline = data.provider === 'offline';
+      el('modelBadge').textContent = offline ? '离线模式' : providerLabel(data.provider);
+      el('activeModelLabel').textContent = offline ? '本地离线决策模型' : data.model;
+      el('activeModelMeta').textContent = offline ? '无需 API Key · 可用于完整流程演示' : `${protocolLabel(data.protocol)} · ${data.base_url}`;
+      updateModelStatus();
+    }
+
+    function updateModelStatus(message = '', kind = '') {
+      const result = el('testResult');
+      result.className = `model-status${kind ? ` ${kind}` : ''}`;
+      if (message) { result.textContent = message; return; }
+      if (!state.activeModel) { result.textContent = '正在读取当前模型配置…'; return; }
+      const active = state.activeModel;
+      if (active.provider === 'offline') { result.textContent = '当前运行：本地离线决策模型。可直接测试并启用，或选择在线 Provider。'; return; }
+      result.textContent = `当前运行：${providerLabel(active.provider)} · ${active.model} · ${protocolLabel(active.protocol)}。请读取可用模型或直接填写模型名后测试。`;
+    }
+
+    function openModelModal() {
+      el('modelModal').classList.add('open');
+      el('modelModal').setAttribute('aria-hidden', 'false');
+      updateModelStatus();
+      setTimeout(() => el('provider').focus(), 0);
+    }
+
+    function closeModelModal() {
+      el('modelModal').classList.remove('open');
+      el('modelModal').setAttribute('aria-hidden', 'true');
     }
 
     async function loadModel() {
@@ -258,49 +417,64 @@
         el('provider').value = data.provider;
         el('baseUrl').value = data.base_url;
         el('modelName').value = data.model;
+        el('protocol').value = data.protocol || 'chat_completions';
+        el('reasoningEffort').value = data.reasoning_effort || 'none';
+        el('responseFormat').value = data.response_format || 'json_object';
         el('apiKey').placeholder = data.api_key_configured ? '已配置，留空保持不变' : '请输入 API Key';
+        renderModelSummary(data);
         toggleModelFields();
       } catch (error) { toast(error.message, true); }
     }
 
     async function saveModel() {
+      if (state.testedModelSignature !== modelSignature()) {
+        updateModelStatus('请先测试当前所选配置，测试成功后才能启用。', 'error');
+        return;
+      }
       const button = el('saveModel'); button.disabled = true; button.textContent = '保存中…';
       try {
         const body = modelPayload();
         const data = await api('/config/model', { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
         el('apiKey').value = ''; el('apiKey').placeholder = data.api_key_configured ? '已配置，留空保持不变' : '请输入 API Key';
+        renderModelSummary(data);
+        closeModelModal();
         toast(data.provider === 'offline' ? '已切换到离线决策模型' : `已配置模型 ${data.model}`);
       } catch (error) { toast(error.message, true); }
-      finally { button.disabled = false; button.textContent = '保存使用'; }
+      finally { button.disabled = false; button.textContent = '启用该模型'; }
     }
 
     async function fetchModels() {
-      const button = el('fetchModels'); const result = el('testResult');
-      button.disabled = true; button.textContent = '获取中…'; result.className = 'test-result';
+      const button = el('fetchModels');
+      button.disabled = true; button.textContent = '读取中…'; updateModelStatus('正在从服务端读取模型列表…');
       try {
         const data = await api('/config/model/models', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(modelPayload()) });
         const list = el('modelOptions'); list.replaceChildren();
         (data.models || []).forEach(model => { const option=document.createElement('option'); option.value=model; list.appendChild(option); });
         if (data.models?.length && !data.models.includes(el('modelName').value)) el('modelName').value = data.models[0];
-        result.className = `test-result show${data.ok ? '' : ' error'}`;
-        result.textContent = data.ok
-          ? `获取到 ${data.count} 个模型 · ${data.latency_ms} ms · 点击“模型名称”选择后再测试`
-          : `获取失败${data.http_status ? ` (HTTP ${data.http_status})` : ''} · ${data.message}。可继续手动填写模型名。`;
-      } catch (error) { result.className='test-result show error'; result.textContent=`获取模型失败：${error.message}。可继续手动填写模型名。`; }
-      finally { button.disabled=false; button.textContent='获取模型'; }
+        invalidateModelTest();
+        updateModelStatus(data.ok
+          ? `已读取 ${data.count} 个模型 · ${data.latency_ms} ms。请在“从可用列表选择模型”中选择后测试。`
+          : `读取失败${data.http_status ? ` (HTTP ${data.http_status})` : ''} · ${data.message}。仍可手动填写模型名。`, data.ok ? 'success' : 'error');
+      } catch (error) { updateModelStatus(`读取模型失败：${error.message}。仍可手动填写模型名。`, 'error'); }
+      finally { button.disabled=false; button.textContent='读取可用模型'; }
     }
 
     async function testModel() {
-      const button = el('testModel'); const result = el('testResult');
-      button.disabled = true; button.textContent = '测试中…'; result.className = 'test-result';
+      const button = el('testModel');
+      button.disabled = true; button.textContent = '测试中…'; updateModelStatus('正在向所选模型发送最小测试请求…');
       try {
         const data = await api('/config/model/test', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(modelPayload()) });
-        result.className = `test-result show${data.ok ? '' : ' error'}`;
-        result.textContent = data.ok
+        if (data.ok) {
+          state.testedModelSignature = modelSignature();
+          el('saveModel').disabled = false;
+        } else {
+          invalidateModelTest();
+        }
+        updateModelStatus(data.ok
           ? `连接成功 · ${data.model} · ${data.latency_ms} ms${data.response_preview ? ` · ${data.response_preview}` : ''}`
-          : `连接失败${data.http_status ? ` (HTTP ${data.http_status})` : ''} · ${data.latency_ms} ms · ${data.message}`;
-      } catch (error) { result.className = 'test-result show error'; result.textContent = `测试失败：${error.message}`; }
-      finally { button.disabled = false; button.textContent = '测试连接'; }
+          : `连接失败${data.http_status ? ` (HTTP ${data.http_status})` : ''} · ${data.latency_ms} ms · ${data.message}`, data.ok ? 'success' : 'error');
+      } catch (error) { invalidateModelTest(); updateModelStatus(`测试失败：${error.message}`, 'error'); }
+      finally { button.disabled = false; button.textContent = '测试所选模型'; }
     }
 
     async function loadDocuments() {
@@ -394,6 +568,14 @@
     }
 
     el('provider').addEventListener('change', applyProviderPreset);
+    ['baseUrl','apiKey','modelName','protocol','reasoningEffort','responseFormat'].forEach(id => {
+      el(id).addEventListener('input', () => { invalidateModelTest(); updateModelStatus(); });
+    });
+    el('openModelConfig').addEventListener('click', openModelModal);
+    el('closeModelConfig').addEventListener('click', closeModelModal);
+    el('cancelModelConfig').addEventListener('click', closeModelModal);
+    el('modelModal').addEventListener('click', event => { if (event.target === el('modelModal')) closeModelModal(); });
+    document.addEventListener('keydown', event => { if (event.key === 'Escape' && el('modelModal').classList.contains('open')) closeModelModal(); });
     el('fetchModels').addEventListener('click', fetchModels);
     el('testModel').addEventListener('click', testModel);
     el('saveModel').addEventListener('click', saveModel);

@@ -23,6 +23,9 @@ class ModelConfig:
     model: str
     base_url: str
     api_key: str
+    protocol: str = "chat_completions"
+    reasoning_effort: str = "none"
+    response_format: str = "json_object"
 
 
 class RuntimeModelConfig:
@@ -35,6 +38,9 @@ class RuntimeModelConfig:
             model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
             base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/"),
             api_key=os.getenv("OPENAI_API_KEY", ""),
+            protocol=os.getenv("MODEL_PROTOCOL", "chat_completions"),
+            reasoning_effort=os.getenv("MODEL_REASONING_EFFORT", "none"),
+            response_format=os.getenv("MODEL_RESPONSE_FORMAT", "json_object"),
         )
 
     def public(self) -> dict[str, Any]:
@@ -43,16 +49,29 @@ class RuntimeModelConfig:
                 "provider": self._config.provider,
                 "model": self._config.model,
                 "base_url": self._config.base_url,
+                "protocol": self._config.protocol,
+                "reasoning_effort": self._config.reasoning_effort,
+                "response_format": self._config.response_format,
                 "api_key_configured": bool(self._config.api_key),
                 "persistence": "memory_only",
             }
 
-    def update(self, provider: str, model: str, base_url: str, api_key: str | None = None) -> dict[str, Any]:
+    def update(
+        self,
+        provider: str,
+        model: str,
+        base_url: str,
+        api_key: str | None = None,
+        protocol: str = "chat_completions",
+        reasoning_effort: str = "none",
+        response_format: str = "json_object",
+    ) -> dict[str, Any]:
         provider = provider.strip().lower()
         model = model.strip()
         base_url = self._normalize_base_url(base_url)
-        if provider not in {"offline", "openai", "deepseek"}:
-            raise ModelConfigError("provider 仅支持 offline、openai 或 deepseek")
+        if provider not in {"offline", "openai", "deepseek", "custom"}:
+            raise ModelConfigError("provider 仅支持 offline、openai、deepseek 或 custom")
+        self._validate_options(protocol, reasoning_effort, response_format)
         if provider != "offline":
             if not model:
                 raise ModelConfigError("必须填写模型名称")
@@ -63,7 +82,15 @@ class RuntimeModelConfig:
             next_key = self._config.api_key if api_key is None or not api_key.strip() else api_key.strip()
             if provider != "offline" and not next_key:
                 raise ModelConfigError("在线模型模式必须配置 API Key")
-            self._config = ModelConfig(provider, model or self._config.model, base_url or self._config.base_url, next_key)
+            self._config = ModelConfig(
+                provider,
+                model or self._config.model,
+                base_url or self._config.base_url,
+                next_key,
+                protocol,
+                reasoning_effort,
+                response_format,
+            )
             return self.public()
 
     def test_connection(
@@ -73,6 +100,9 @@ class RuntimeModelConfig:
         base_url: str,
         api_key: str | None = None,
         timeout_seconds: int = 20,
+        protocol: str = "chat_completions",
+        reasoning_effort: str = "none",
+        response_format: str = "json_object",
     ) -> dict[str, Any]:
         provider = provider.strip().lower()
         if provider == "offline":
@@ -81,8 +111,9 @@ class RuntimeModelConfig:
             fallback_key = self._config.api_key
         key = api_key.strip() if api_key and api_key.strip() else fallback_key
         # Reuse validation without changing the active configuration.
-        if provider not in {"openai", "deepseek"}:
-            raise ModelConfigError("仅支持 OpenAI-compatible 或 DeepSeek 连通性测试")
+        if provider not in {"openai", "deepseek", "custom"}:
+            raise ModelConfigError("仅支持 OpenAI、DeepSeek 或自定义中转站连通性测试")
+        self._validate_options(protocol, reasoning_effort, response_format)
         model = model.strip()
         base_url = self._normalize_base_url(base_url)
         parsed = urlparse(base_url)
@@ -93,18 +124,9 @@ class RuntimeModelConfig:
         if not key:
             raise ModelConfigError("测试在线模型必须填写 API Key")
 
-        payload = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": "You are a connectivity test. Reply with exactly OK."},
-                {"role": "user", "content": "ping"},
-            ],
-            "temperature": 0,
-            "max_tokens": 16,
-            "stream": False,
-        }
+        payload, endpoint = self._test_payload(model, protocol, reasoning_effort, response_format)
         request = urllib.request.Request(
-            f"{base_url}/chat/completions",
+            f"{base_url}/{endpoint}",
             data=json.dumps(payload).encode("utf-8"),
             headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json", "Accept": "application/json"},
             method="POST",
@@ -114,12 +136,13 @@ class RuntimeModelConfig:
             with urllib.request.urlopen(request, timeout=max(3, min(timeout_seconds, 60))) as response:
                 raw = response.read().decode("utf-8")
                 data = json.loads(raw)
-                content = data.get("choices", [{}])[0].get("message", {}).get("content") or ""
+                content = self._response_content(data, protocol)
                 return {
                     "ok": True,
                     "provider": provider,
                     "model": data.get("model", model),
                     "base_url": base_url,
+                    "protocol": protocol,
                     "latency_ms": round((time.perf_counter() - started) * 1000),
                     "http_status": response.status,
                     "response_preview": content.strip()[:120] or "请求成功（响应正文为空）",
@@ -140,8 +163,8 @@ class RuntimeModelConfig:
         provider = provider.strip().lower()
         if provider == "offline":
             return {"ok": True, "provider": "offline", "models": ["offline"], "count": 1, "latency_ms": 0}
-        if provider not in {"openai", "deepseek"}:
-            raise ModelConfigError("仅支持 OpenAI-compatible 或 DeepSeek 模型发现")
+        if provider not in {"openai", "deepseek", "custom"}:
+            raise ModelConfigError("仅支持 OpenAI、DeepSeek 或自定义中转站模型发现")
         base_url = self._normalize_base_url(base_url)
         parsed = urlparse(base_url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
@@ -195,15 +218,68 @@ class RuntimeModelConfig:
 
     def _normalize_base_url(self, value: str) -> str:
         base_url = value.strip().rstrip("/")
-        for suffix in ("/chat/completions", "/models"):
+        for suffix in ("/chat/completions", "/responses", "/models"):
             if base_url.endswith(suffix):
                 return base_url[:-len(suffix)].rstrip("/")
         return base_url
 
+    def _validate_options(self, protocol: str, reasoning_effort: str, response_format: str) -> None:
+        if protocol not in {"chat_completions", "responses"}:
+            raise ModelConfigError("接口协议仅支持 Chat Completions 或 Responses API")
+        if reasoning_effort not in {"none", "low", "medium", "high", "max"}:
+            raise ModelConfigError("推理强度必须是 none/low/medium/high/max")
+        if response_format not in {"json_object", "text"}:
+            raise ModelConfigError("结构化输出仅支持 json_object 或 text")
+
+    def _test_payload(self, model: str, protocol: str, reasoning_effort: str, response_format: str) -> tuple[dict[str, Any], str]:
+        prompt = "Return a JSON object with one field status whose value is OK." if response_format == "json_object" else "Reply with exactly OK."
+        if protocol == "responses":
+            payload: dict[str, Any] = {"model": model, "input": prompt, "max_output_tokens": 32}
+            if reasoning_effort != "none":
+                payload["reasoning"] = {"effort": reasoning_effort}
+            if response_format == "json_object":
+                payload["text"] = {"format": {"type": "json_object"}}
+            return payload, "responses"
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": "You are a connectivity test."},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0,
+            "max_tokens": 32,
+            "stream": False,
+        }
+        if reasoning_effort != "none":
+            payload["reasoning_effort"] = reasoning_effort
+        if response_format == "json_object":
+            payload["response_format"] = {"type": "json_object"}
+        return payload, "chat/completions"
+
+    def _response_content(self, payload: dict[str, Any], protocol: str) -> str:
+        if protocol == "chat_completions":
+            return payload.get("choices", [{}])[0].get("message", {}).get("content") or ""
+        if payload.get("output_text"):
+            return str(payload["output_text"])
+        texts = []
+        for item in payload.get("output", []):
+            for content in item.get("content", []):
+                value = content.get("text") or content.get("output_text")
+                if value:
+                    texts.append(str(value))
+        return "\n".join(texts)
+
     def build_model(self) -> DecisionModel:
         with self._lock:
             config = ModelConfig(**self._config.__dict__)
-        if config.provider in {"openai", "deepseek"}:
-            return OpenAICompatibleDecisionModel(config.api_key, config.base_url, config.model)
+        if config.provider in {"openai", "deepseek", "custom"}:
+            return OpenAICompatibleDecisionModel(
+                config.api_key,
+                config.base_url,
+                config.model,
+                protocol=config.protocol,
+                reasoning_effort=config.reasoning_effort,
+                response_format=config.response_format,
+            )
         return OfflineDecisionModel()
 

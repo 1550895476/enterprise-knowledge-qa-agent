@@ -135,41 +135,86 @@ class OfflineDecisionModel(DecisionModel):
 class OpenAICompatibleDecisionModel(DecisionModel):
     source = "openai_compatible_model"
 
-    def __init__(self, api_key: str | None = None, base_url: str | None = None, model: str | None = None):
+    def __init__(
+        self,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        model: str | None = None,
+        protocol: str = "chat_completions",
+        reasoning_effort: str = "none",
+        response_format: str = "json_object",
+    ):
         self.api_key = api_key or os.getenv("OPENAI_API_KEY", "")
         self.base_url = (base_url or os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")).rstrip("/")
         self.model = model or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+        self.protocol = protocol
+        self.reasoning_effort = reasoning_effort
+        self.response_format = response_format
 
     def choose(self, state: dict[str, Any], observation: ToolObservation | None) -> Action:
         if not self.api_key:
             raise RuntimeError("OPENAI_API_KEY 未配置，不能使用 openai 模型")
-        payload = {
-            "model": self.model,
-            "temperature": 0,
-            "messages": [
-                {"role": "system", "content": (
-                    "你是企业知识问答 Agent 的决策模型。只输出 JSON。根据问题、历史、"
-                    "已执行动作和工具观察选择下一动作。action 只能是 search/read/ask/finish。"
-                    "资料冲突时必须 ask，不能猜测；无资料时 finish 并写 gaps。JSON 字段："
-                    "action, query, doc_id, answer, gaps, reason。answer 只能基于 readings 中已读取的原文，"
-                    "并标注文档 ID、页码、章节和 Chunk ID；没有 readings 时不得生成事实答案。"
-                )},
-                {"role": "user", "content": json.dumps({"state": state, "observation": observation.__dict__ if observation else None}, ensure_ascii=False)},
-            ],
-        }
+        instruction = (
+            "你是企业知识问答 Agent 的决策模型。只输出 JSON。根据问题、历史、"
+            "已执行动作和工具观察选择下一动作。action 只能是 search/read/ask/finish。"
+            "资料冲突时必须 ask，不能猜测；无资料时 finish 并写 gaps。JSON 字段："
+            "action, query, doc_id, answer, gaps, reason。answer 只能基于 readings 中已读取的原文，"
+            "并标注文档 ID、页码、章节和 Chunk ID；没有 readings 时不得生成事实答案。"
+        )
+        user_input = json.dumps({"state": state, "observation": observation.__dict__ if observation else None}, ensure_ascii=False)
+        if self.protocol == "responses":
+            payload: dict[str, Any] = {
+                "model": self.model,
+                "input": [
+                    {"role": "system", "content": instruction},
+                    {"role": "user", "content": user_input},
+                ],
+                "max_output_tokens": 2000,
+            }
+            endpoint = "responses"
+            if self.reasoning_effort != "none":
+                payload["reasoning"] = {"effort": self.reasoning_effort}
+            if self.response_format == "json_object":
+                payload["text"] = {"format": {"type": "json_object"}}
+        else:
+            payload = {
+                "model": self.model,
+                "temperature": 0,
+                "messages": [
+                    {"role": "system", "content": instruction},
+                    {"role": "user", "content": user_input},
+                ],
+            }
+            endpoint = "chat/completions"
+            if self.reasoning_effort != "none":
+                payload["reasoning_effort"] = self.reasoning_effort
+            if self.response_format == "json_object":
+                payload["response_format"] = {"type": "json_object"}
         request = urllib.request.Request(
-            f"{self.base_url}/chat/completions",
+            f"{self.base_url}/{endpoint}",
             data=json.dumps(payload).encode("utf-8"),
             headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
             method="POST",
         )
         with urllib.request.urlopen(request, timeout=45) as response:
             result = json.loads(response.read().decode("utf-8"))
-        content = result["choices"][0]["message"]["content"]
+        content = self._response_content(result)
         content = content.strip().removeprefix("```json").removesuffix("```").strip()
         data = json.loads(content)
         return Action(
             name=data["action"], query=data.get("query", ""), doc_id=data.get("doc_id", ""),
             answer=data.get("answer", ""), gaps=data.get("gaps", []), reason=data.get("reason", "模型决策"),
         )
+
+    def _response_content(self, payload: dict[str, Any]) -> str:
+        if self.protocol == "chat_completions":
+            return payload["choices"][0]["message"]["content"]
+        if payload.get("output_text"):
+            return str(payload["output_text"])
+        for item in payload.get("output", []):
+            for content in item.get("content", []):
+                value = content.get("text") or content.get("output_text")
+                if value:
+                    return str(value)
+        raise ValueError("Responses API 未返回可解析的 output_text")
 

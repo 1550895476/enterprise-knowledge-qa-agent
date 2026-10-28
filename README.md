@@ -29,11 +29,11 @@ python -m src.cli --pipeline advanced --question "型号 Z9 怎么开机"
 
 输出 JSON，包含 `answer`、`citations`、`gaps`、`status` 与 `trace`。用 `--pretty` 可获得适合人工阅读的格式。
 
-可选地使用 OpenAI-compatible Chat Completions 服务：
+可选地使用 OpenAI-compatible Chat Completions 或 Responses API 服务：
 
 ```bash
 copy .env.example .env
-# 填写 OPENAI_API_KEY、OPENAI_BASE_URL、OPENAI_MODEL
+# 填写 OPENAI_API_KEY、OPENAI_BASE_URL、OPENAI_MODEL；协议等选项见 .env.example
 python -m src.cli --model openai --question "报销期限多久"
 ```
 
@@ -50,17 +50,18 @@ curl -X POST http://localhost:8000/ask -H "Content-Type: application/json" -d "{
 
 浏览器打开 `http://localhost:8000/` 可进入完整操作界面，包括：
 
-- 离线/OpenAI-compatible 模型配置；
-- 中转站与 DeepSeek 预设，可通过 `/models` 获取可用模型列表，选择后再测试连接、延迟和响应；
+- 离线、OpenAI、DeepSeek 与 OpenAI-compatible 中转站配置；
+- 支持 Responses API / Chat Completions、推理强度与 JSON 输出切换；
+- 可通过 `/models` 获取可用模型列表，选择并测试成功后再启用；
 - PDF、TXT、Markdown 拖拽上传；
 - 上传文档选择与检索范围控制；
 - 多轮问答、状态提示及页码/章节/Chunk 引用展示。
 
 在线模型的 API Key 只保存在当前服务进程内存，不写入仓库或运行时文件。开发接口文档保留在 `/docs`。
 
-模型连接测试调用标准 `POST <base_url>/chat/completions`，因此可用于 OpenAI-compatible 中转站及兼容厂商。DeepSeek 预设使用官方兼容地址 `https://api.deepseek.com`，Base URL 和模型名都可继续修改。
+模型连接测试会根据所选协议调用 `POST <base_url>/responses` 或 `POST <base_url>/chat/completions`，可用于 OpenAI、DeepSeek、OpenAI-compatible 中转站及其他兼容厂商。DeepSeek 预设使用 `https://api.deepseek.com`；Base URL、模型名、协议、推理强度和输出格式都可修改。
 
-推荐操作顺序：选择 OpenAI-compatible/DeepSeek → 填写 Base URL 和 API Key → 点击“获取模型” → 在模型名称建议列表中选择 → 点击“测试连接” → 成功后“保存使用”。若中转站未实现标准 `GET <base_url>/models`，仍可手动填写模型名称。
+推荐操作顺序：点击“配置 / 切换模型” → 选择 Provider 与协议 → 填写 Base URL 和 API Key → “读取可用模型” → 选择模型 → “测试所选模型” → 成功后“启用该模型”。若中转站未实现标准 `GET <base_url>/models`，仍可手动填写模型名称。
 
 上传文件并针对该文件提问：
 
