@@ -59,6 +59,10 @@
     .btn-primary:hover:not(:disabled) { background: #5eead4; transform: translateY(-1px); }
     .btn-ghost { background: transparent; color: #b8d5d1; border: 1px solid rgba(255,255,255,.13); }
     .btn-wide { width: 100%; }
+    .button-row { display: grid; grid-template-columns: .9fr 1.1fr; gap: 8px; }
+    .test-result { display: none; margin-top: 10px; border-radius: 10px; padding: 9px 10px; font-size: 10px; line-height: 1.55; background: rgba(52,211,153,.1); border: 1px solid rgba(52,211,153,.22); color: #bdf8dd; overflow-wrap: anywhere; }
+    .test-result.show { display: block; }
+    .test-result.error { background: rgba(248,113,113,.1); border-color: rgba(248,113,113,.25); color: #fecaca; }
     .dropzone {
       display: block; border: 1px dashed rgba(125,232,217,.45); border-radius: 12px; padding: 16px;
       text-align: center; color: #bbd8d4; background: rgba(45,212,191,.05); transition: .2s ease;
@@ -139,14 +143,15 @@
 
       <section class="side-card">
         <div class="side-title"><h2>模型配置</h2><span id="modelBadge" class="badge">离线模式</span></div>
-        <div class="field"><label for="provider">决策模型</label><select id="provider"><option value="offline">离线决策模型</option><option value="openai">OpenAI-compatible</option></select></div>
+        <div class="field"><label for="provider">决策模型</label><select id="provider"><option value="offline">离线决策模型</option><option value="openai">OpenAI-compatible / 中转站</option><option value="deepseek">DeepSeek</option></select></div>
         <div id="remoteFields">
           <div class="field"><label for="baseUrl">Base URL</label><input id="baseUrl" value="https://api.openai.com/v1"></div>
           <div class="field"><label for="modelName">模型名称</label><input id="modelName" value="gpt-4o-mini"></div>
           <div class="field"><label for="apiKey">API Key</label><input id="apiKey" type="password" autocomplete="new-password" placeholder="已配置时可留空"></div>
           <div class="hint">密钥仅保存在当前服务进程内存，不写入文件。</div>
         </div>
-        <button id="saveModel" class="btn btn-primary btn-wide">保存模型配置</button>
+        <div class="button-row"><button id="testModel" class="btn btn-ghost">测试连接</button><button id="saveModel" class="btn btn-primary">保存并使用</button></div>
+        <div id="testResult" class="test-result"></div>
       </section>
 
       <section class="side-card">
@@ -207,7 +212,10 @@
       const response = await fetch(path, options);
       let data = null;
       try { data = await response.json(); } catch { data = {}; }
-      if (!response.ok) throw new Error(data.detail || `请求失败 (${response.status})`);
+      if (!response.ok) {
+        const detail = typeof data.detail === 'string' ? data.detail : (data.detail?.message || JSON.stringify(data.detail || {}));
+        throw new Error(detail || `请求失败 (${response.status})`);
+      }
       return data;
     }
 
@@ -220,9 +228,26 @@
     }
 
     function toggleModelFields() {
-      const remote = el('provider').value === 'openai';
+      const remote = el('provider').value !== 'offline';
       el('remoteFields').style.display = remote ? 'block' : 'none';
-      el('modelBadge').textContent = remote ? '在线模型' : '离线模式';
+      el('modelBadge').textContent = el('provider').value === 'deepseek' ? 'DeepSeek' : (remote ? '兼容接口' : '离线模式');
+      el('testResult').className = 'test-result';
+    }
+
+    function applyProviderPreset() {
+      const provider = el('provider').value;
+      if (provider === 'deepseek') {
+        el('baseUrl').value = 'https://api.deepseek.com';
+        el('modelName').value = 'deepseek-flash';
+      } else if (provider === 'openai' && el('baseUrl').value.includes('api.deepseek.com')) {
+        el('baseUrl').value = 'https://api.openai.com/v1';
+        if (el('modelName').value.startsWith('deepseek-')) el('modelName').value = 'gpt-4o-mini';
+      }
+      toggleModelFields();
+    }
+
+    function modelPayload() {
+      return { provider: el('provider').value, base_url: el('baseUrl').value, model: el('modelName').value, api_key: el('apiKey').value || null };
     }
 
     async function loadModel() {
@@ -239,12 +264,25 @@
     async function saveModel() {
       const button = el('saveModel'); button.disabled = true; button.textContent = '保存中…';
       try {
-        const body = { provider: el('provider').value, base_url: el('baseUrl').value, model: el('modelName').value, api_key: el('apiKey').value || null };
+        const body = modelPayload();
         const data = await api('/config/model', { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
         el('apiKey').value = ''; el('apiKey').placeholder = data.api_key_configured ? '已配置，留空保持不变' : '请输入 API Key';
         toast(data.provider === 'offline' ? '已切换到离线决策模型' : `已配置模型 ${data.model}`);
       } catch (error) { toast(error.message, true); }
-      finally { button.disabled = false; button.textContent = '保存模型配置'; }
+      finally { button.disabled = false; button.textContent = '保存并使用'; }
+    }
+
+    async function testModel() {
+      const button = el('testModel'); const result = el('testResult');
+      button.disabled = true; button.textContent = '测试中…'; result.className = 'test-result';
+      try {
+        const data = await api('/config/model/test', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(modelPayload()) });
+        result.className = `test-result show${data.ok ? '' : ' error'}`;
+        result.textContent = data.ok
+          ? `连接成功 · ${data.model} · ${data.latency_ms} ms${data.response_preview ? ` · ${data.response_preview}` : ''}`
+          : `连接失败${data.http_status ? ` (HTTP ${data.http_status})` : ''} · ${data.latency_ms} ms · ${data.message}`;
+      } catch (error) { result.className = 'test-result show error'; result.textContent = `测试失败：${error.message}`; }
+      finally { button.disabled = false; button.textContent = '测试连接'; }
     }
 
     async function loadDocuments() {
@@ -337,7 +375,8 @@
       finally { state.sending = false; el('sendButton').disabled = false; el('question').focus(); }
     }
 
-    el('provider').addEventListener('change', toggleModelFields);
+    el('provider').addEventListener('change', applyProviderPreset);
+    el('testModel').addEventListener('click', testModel);
     el('saveModel').addEventListener('click', saveModel);
     el('refreshDocs').addEventListener('click', loadDocuments);
     el('fileInput').addEventListener('change', event => chooseFile(event.target.files[0]));

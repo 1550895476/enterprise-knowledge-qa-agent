@@ -51,11 +51,14 @@ curl -X POST http://localhost:8000/ask -H "Content-Type: application/json" -d "{
 浏览器打开 `http://localhost:8000/` 可进入完整操作界面，包括：
 
 - 离线/OpenAI-compatible 模型配置；
+- 中转站与 DeepSeek 预设，并可在保存前测试连接、延迟和响应；
 - PDF、TXT、Markdown 拖拽上传；
 - 上传文档选择与检索范围控制；
 - 多轮问答、状态提示及页码/章节/Chunk 引用展示。
 
 在线模型的 API Key 只保存在当前服务进程内存，不写入仓库或运行时文件。开发接口文档保留在 `/docs`。
+
+模型连接测试调用标准 `POST <base_url>/chat/completions`，因此可用于 OpenAI-compatible 中转站及兼容厂商。DeepSeek 预设使用官方兼容地址 `https://api.deepseek.com`，Base URL 和模型名都可继续修改。
 
 上传文件并针对该文件提问：
 

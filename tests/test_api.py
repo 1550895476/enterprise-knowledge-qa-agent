@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -28,6 +29,33 @@ class WebInterfaceTests(unittest.TestCase):
         empty_config._config.api_key = ""
         with self.assertRaises(ModelConfigError):
             empty_config.update("openai", "gpt-4o-mini", "https://api.openai.com/v1")
+
+    def test_offline_model_connection_test(self):
+        result = RuntimeModelConfig().test_connection("offline", "", "")
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["latency_ms"], 0)
+
+    def test_deepseek_uses_openai_compatible_chat_endpoint(self):
+        class FakeResponse:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return b'{"model":"deepseek-flash","choices":[{"message":{"content":"OK"}}]}'
+
+        with patch("urllib.request.urlopen", return_value=FakeResponse()) as mocked:
+            result = RuntimeModelConfig().test_connection(
+                "deepseek", "deepseek-flash", "https://api.deepseek.com", "test-key"
+            )
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["response_preview"], "OK")
+        request = mocked.call_args.args[0]
+        self.assertEqual(request.full_url, "https://api.deepseek.com/chat/completions")
 
 
 if __name__ == "__main__":

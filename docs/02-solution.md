@@ -62,3 +62,5 @@ multipart 文件 → 类型/大小/PDF 头校验 → 隔离保存
 根路径 `/` 返回无需构建工具的单页界面，支持模型配置、文件上传、文档勾选、多轮问答和引用展示。`RuntimeModelConfig` 提供线程安全的运行时配置：离线模式使用 `OfflineDecisionModel`，OpenAI-compatible 模式使用用户填写的 Base URL、模型名和 API Key。读取配置时永不返回密钥原文，密钥只驻留进程内存；服务重启后需重新填写或使用环境变量。
 
 在线模型负责检索动作与证据回答，Prompt 要求只能使用已读取的 `readings`，并引用文档 ID、页码、章节和 Chunk ID。离线模式继续使用可复现的证据生成器。
+
+模型配置旁提供独立连通性测试。测试不会修改当前生效配置，而是向 `<base_url>/chat/completions` 发送最小 `ping` 请求，返回成功状态、实际模型名、HTTP 状态、延迟和截断后的响应摘要；错误响应经过脱敏，不返回 API Key。除通用 OpenAI-compatible 中转站外，界面提供可编辑的 DeepSeek 预设。
