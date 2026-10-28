@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>企业知识问答 Agent</title>
+  <style>
+    :root {
+      --bg: #f3f6f8;
+      --panel: #ffffff;
+      --panel-soft: #f8fafb;
+      --ink: #17212b;
+      --muted: #667784;
+      --line: #dce5e9;
+      --brand: #0f766e;
+      --brand-dark: #0a5c56;
+      --brand-soft: #e7f5f2;
+      --warning: #b45309;
+      --danger: #b42318;
+      --shadow: 0 18px 50px rgba(24, 48, 57, .09);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--ink); }
+    button, input, select, textarea { font: inherit; }
+    button { cursor: pointer; }
+    .app { min-height: 100vh; display: grid; grid-template-columns: 370px 1fr; }
+    .sidebar {
+      height: 100vh; overflow-y: auto; background: #102d31; color: #effcf9;
+      padding: 24px 20px; border-right: 1px solid rgba(255,255,255,.08);
+    }
+    .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+    .brand-mark {
+      width: 42px; height: 42px; border-radius: 13px; display: grid; place-items: center;
+      background: linear-gradient(145deg, #2dd4bf, #0f766e); box-shadow: 0 8px 24px rgba(45,212,191,.22);
+      font-weight: 800; color: white; letter-spacing: -.04em;
+    }
+    .brand h1 { font-size: 17px; margin: 0 0 3px; }
+    .brand p { font-size: 12px; color: #a9c8c5; margin: 0; }
+    .service-status { display: flex; align-items: center; gap: 7px; color: #b8d5d1; font-size: 12px; margin-bottom: 20px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #f59e0b; box-shadow: 0 0 0 4px rgba(245,158,11,.12); }
+    .dot.ok { background: #34d399; box-shadow: 0 0 0 4px rgba(52,211,153,.12); }
+    .side-card { background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.1); border-radius: 16px; padding: 16px; margin-bottom: 14px; }
+    .side-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 13px; }
+    .side-title h2 { font-size: 13px; margin: 0; letter-spacing: .02em; }
+    .badge { font-size: 10px; padding: 3px 7px; border-radius: 999px; background: rgba(45,212,191,.15); color: #8cf2e4; }
+    .field { margin-bottom: 11px; }
+    .field label { display: block; color: #b7cfcc; font-size: 11px; margin-bottom: 6px; }
+    .field input, .field select {
+      width: 100%; border: 1px solid rgba(255,255,255,.13); border-radius: 10px;
+      background: rgba(2,20,23,.46); color: #f2fffd; padding: 10px 11px; outline: none;
+    }
+    .field input:focus, .field select:focus { border-color: #45cbbb; box-shadow: 0 0 0 3px rgba(45,212,191,.12); }
+    .field input::placeholder { color: #71938f; }
+    .hint { color: #8eafab; font-size: 10px; line-height: 1.5; margin: -3px 0 10px; }
+    .btn { border: 0; border-radius: 10px; padding: 10px 13px; font-weight: 650; transition: .18s ease; }
+    .btn:disabled { cursor: not-allowed; opacity: .55; }
+    .btn-primary { background: #2dd4bf; color: #082c2b; }
+    .btn-primary:hover:not(:disabled) { background: #5eead4; transform: translateY(-1px); }
+    .btn-ghost { background: transparent; color: #b8d5d1; border: 1px solid rgba(255,255,255,.13); }
+    .btn-wide { width: 100%; }
+    .dropzone {
+      display: block; border: 1px dashed rgba(125,232,217,.45); border-radius: 12px; padding: 16px;
+      text-align: center; color: #bbd8d4; background: rgba(45,212,191,.05); transition: .2s ease;
+    }
+    .dropzone.drag, .dropzone:hover { border-color: #5eead4; background: rgba(45,212,191,.1); }
+    .dropzone strong { display: block; font-size: 12px; color: #effcf9; margin-bottom: 4px; }
+    .dropzone span { font-size: 10px; }
+    #fileInput { display: none; }
+    .file-name { font-size: 11px; color: #9fd1ca; margin: 9px 0; overflow-wrap: anywhere; min-height: 16px; }
+    .documents { display: grid; gap: 8px; max-height: 225px; overflow-y: auto; padding-right: 2px; }
+    .doc-row { display: grid; grid-template-columns: 18px 1fr auto; gap: 8px; align-items: center; padding: 9px; border-radius: 10px; background: rgba(2,20,23,.3); }
+    .doc-row input { accent-color: #2dd4bf; }
+    .doc-name { font-size: 11px; color: #e8f7f5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .doc-meta { color: #7fa5a1; font-size: 9px; margin-top: 2px; }
+    .doc-state { font-size: 9px; color: #6ee7b7; }
+    .empty-docs { color: #7fa5a1; font-size: 11px; padding: 8px 0; text-align: center; }
+    .side-footer { color: #6f9793; font-size: 10px; line-height: 1.55; padding: 3px 4px; }
+    .side-footer a { color: #8fe5da; text-decoration: none; }
+
+    .workspace { height: 100vh; display: flex; flex-direction: column; min-width: 0; }
+    .topbar { height: 72px; display: flex; align-items: center; justify-content: space-between; padding: 0 30px; background: rgba(255,255,255,.86); border-bottom: 1px solid var(--line); backdrop-filter: blur(12px); }
+    .topbar h2 { margin: 0 0 3px; font-size: 17px; }
+    .topbar p { margin: 0; color: var(--muted); font-size: 11px; }
+    .scope-pill { background: var(--brand-soft); color: var(--brand-dark); border: 1px solid #c9e9e3; border-radius: 999px; padding: 7px 11px; font-size: 11px; }
+    .chat-shell { flex: 1; min-height: 0; display: flex; flex-direction: column; max-width: 1040px; width: 100%; margin: 0 auto; }
+    .messages { flex: 1; overflow-y: auto; padding: 30px 26px 20px; scroll-behavior: smooth; }
+    .welcome { max-width: 670px; margin: 8vh auto 0; text-align: center; }
+    .welcome-icon { width: 66px; height: 66px; border-radius: 22px; display: grid; place-items: center; margin: 0 auto 18px; color: white; font-size: 26px; background: linear-gradient(145deg, #0f766e, #164e63); box-shadow: var(--shadow); }
+    .welcome h3 { font-size: 24px; margin: 0 0 9px; letter-spacing: -.03em; }
+    .welcome p { color: var(--muted); font-size: 13px; line-height: 1.7; margin: 0 auto 22px; max-width: 540px; }
+    .suggestions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .suggestion { border: 1px solid var(--line); background: var(--panel); border-radius: 13px; padding: 13px; text-align: left; color: #30404a; font-size: 11px; line-height: 1.5; box-shadow: 0 4px 16px rgba(27,48,58,.03); }
+    .suggestion:hover { border-color: #9bd7ce; transform: translateY(-1px); }
+    .message { display: flex; gap: 11px; margin: 0 auto 18px; max-width: 820px; }
+    .message.user { flex-direction: row-reverse; }
+    .avatar { width: 31px; height: 31px; flex: 0 0 31px; border-radius: 10px; display: grid; place-items: center; background: #dcebe8; color: var(--brand); font-size: 12px; font-weight: 800; }
+    .user .avatar { background: #233e46; color: white; }
+    .bubble { max-width: min(720px, 82%); padding: 13px 15px; border-radius: 5px 16px 16px 16px; background: var(--panel); border: 1px solid var(--line); box-shadow: 0 5px 18px rgba(34,57,66,.04); white-space: pre-wrap; font-size: 13px; line-height: 1.7; }
+    .user .bubble { background: #173b40; color: #f2fffd; border-color: #173b40; border-radius: 16px 5px 16px 16px; }
+    .message-meta { color: var(--muted); font-size: 10px; margin-top: 8px; }
+    .citations { margin-top: 10px; display: grid; gap: 7px; }
+    .citation { background: var(--panel-soft); border: 1px solid var(--line); border-radius: 10px; padding: 9px 10px; }
+    .citation strong { display: block; color: #2b4950; font-size: 10px; margin-bottom: 3px; }
+    .citation span { color: var(--muted); font-size: 9px; line-height: 1.45; }
+    .typing .bubble { color: var(--muted); }
+    .typing-dots span { display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: #7aa39e; margin-right: 3px; animation: pulse 1.2s infinite; }
+    .typing-dots span:nth-child(2) { animation-delay: .15s; }
+    .typing-dots span:nth-child(3) { animation-delay: .3s; }
+    @keyframes pulse { 0%, 70%, 100% { opacity: .28; transform: translateY(0); } 35% { opacity: 1; transform: translateY(-2px); } }
+    .composer-wrap { padding: 14px 26px 24px; background: linear-gradient(transparent, var(--bg) 18%); }
+    .composer { display: flex; align-items: flex-end; gap: 10px; background: white; border: 1px solid #ccdadd; border-radius: 17px; padding: 9px 10px 9px 15px; box-shadow: var(--shadow); }
+    .composer:focus-within { border-color: #7acfc3; box-shadow: 0 18px 50px rgba(15,118,110,.12), 0 0 0 3px rgba(45,212,191,.1); }
+    .composer textarea { flex: 1; min-height: 38px; max-height: 140px; resize: none; border: 0; outline: 0; padding: 9px 0 5px; color: var(--ink); background: transparent; line-height: 1.5; }
+    .send { width: 40px; height: 40px; flex: 0 0 40px; border-radius: 12px; border: 0; background: var(--brand); color: white; font-size: 17px; }
+    .send:hover:not(:disabled) { background: var(--brand-dark); }
+    .composer-note { text-align: center; color: #87969e; font-size: 9px; margin-top: 8px; }
+    .toast { position: fixed; right: 24px; top: 22px; z-index: 20; min-width: 240px; max-width: 360px; padding: 12px 14px; border-radius: 11px; background: #163a3f; color: white; box-shadow: var(--shadow); font-size: 12px; transform: translateY(-14px); opacity: 0; pointer-events: none; transition: .22s ease; }
+    .toast.show { transform: translateY(0); opacity: 1; }
+    .toast.error { background: #8f2920; }
+    @media (max-width: 860px) {
+      .app { grid-template-columns: 1fr; }
+      .sidebar { height: auto; max-height: none; }
+      .workspace { height: 75vh; min-height: 620px; }
+      .suggestions { grid-template-columns: 1fr; }
+      .topbar { padding: 0 18px; }
+      .messages, .composer-wrap { padding-left: 15px; padding-right: 15px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">K</div>
+        <div><h1>企业知识问答 Agent</h1><p>Evidence-grounded workspace</p></div>
+      </div>
+      <div class="service-status"><span id="healthDot" class="dot"></span><span id="healthText">正在连接服务…</span></div>
+
+      <section class="side-card">
+        <div class="side-title"><h2>模型配置</h2><span id="modelBadge" class="badge">离线模式</span></div>
+        <div class="field"><label for="provider">决策模型</label><select id="provider"><option value="offline">离线决策模型</option><option value="openai">OpenAI-compatible</option></select></div>
+        <div id="remoteFields">
+          <div class="field"><label for="baseUrl">Base URL</label><input id="baseUrl" value="https://api.openai.com/v1"></div>
+          <div class="field"><label for="modelName">模型名称</label><input id="modelName" value="gpt-4o-mini"></div>
+          <div class="field"><label for="apiKey">API Key</label><input id="apiKey" type="password" autocomplete="new-password" placeholder="已配置时可留空"></div>
+          <div class="hint">密钥仅保存在当前服务进程内存，不写入文件。</div>
+        </div>
+        <button id="saveModel" class="btn btn-primary btn-wide">保存模型配置</button>
+      </section>
+
+      <section class="side-card">
+        <div class="side-title"><h2>上传知识文件</h2><span class="badge">PDF / TXT / MD</span></div>
+        <label id="dropzone" class="dropzone" for="fileInput"><strong>点击选择或拖入文件</strong><span>单个文件最大 20 MiB</span></label>
+        <input id="fileInput" type="file" accept=".pdf,.txt,.md,application/pdf,text/plain,text/markdown">
+        <div id="fileName" class="file-name">尚未选择文件</div>
+        <button id="uploadButton" class="btn btn-primary btn-wide" disabled>上传并建立索引</button>
+      </section>
+
+      <section class="side-card">
+        <div class="side-title"><h2>知识文件</h2><button id="refreshDocs" class="btn btn-ghost" style="padding:4px 8px;font-size:10px">刷新</button></div>
+        <div id="documents" class="documents"><div class="empty-docs">暂无上传文件</div></div>
+      </section>
+      <div class="side-footer">选中文档后，问答只检索所选范围。未选择时使用内置知识库。<br><a href="/docs" target="_blank">开发接口文档 ↗</a></div>
+    </aside>
+
+    <main class="workspace">
+      <header class="topbar">
+        <div><h2>知识问答</h2><p>基于检索证据回答，并附带页码、章节和 Chunk 引用</p></div>
+        <div id="scopePill" class="scope-pill">内置知识库</div>
+      </header>
+      <div class="chat-shell">
+        <div id="messages" class="messages">
+          <div id="welcome" class="welcome">
+            <div class="welcome-icon">⌁</div>
+            <h3>从可靠资料中找到答案</h3>
+            <p>上传制度、产品手册或 FAQ，选择需要查询的文件，然后直接提问。证据不足或资料冲突时，Agent 会停止猜测并说明原因。</p>
+            <div class="suggestions">
+              <button class="suggestion" data-question="这份文档的核心内容是什么？">概括当前文档的核心内容</button>
+              <button class="suggestion" data-question="请列出关键规则和适用范围。">提取关键规则与适用范围</button>
+              <button class="suggestion" data-question="资料中是否存在冲突或信息缺口？">检查冲突与资料缺口</button>
+            </div>
+          </div>
+        </div>
+        <div class="composer-wrap">
+          <form id="chatForm" class="composer">
+            <textarea id="question" rows="1" placeholder="输入问题，Enter 发送，Shift+Enter 换行"></textarea>
+            <button id="sendButton" class="send" type="submit" aria-label="发送">↑</button>
+          </form>
+          <div class="composer-note">回答由模型和检索结果生成，请根据引用原文核验重要信息。</div>
+        </div>
+      </div>
+    </main>
+  </div>
+  <div id="toast" class="toast"></div>
+
+  <script>
+    const state = { documents: [], selected: new Set(), history: [], selectedFile: null, sending: false };
+    const el = id => document.getElementById(id);
+
+    function toast(message, error = false) {
+      const node = el('toast'); node.textContent = message; node.className = `toast show${error ? ' error' : ''}`;
+      clearTimeout(toast.timer); toast.timer = setTimeout(() => node.className = 'toast', 3000);
+    }
+
+    async function api(path, options = {}) {
+      const response = await fetch(path, options);
+      let data = null;
+      try { data = await response.json(); } catch { data = {}; }
+      if (!response.ok) throw new Error(data.detail || `请求失败 (${response.status})`);
+      return data;
+    }
+
+    async function loadHealth() {
+      try {
+        const data = await api('/health');
+        el('healthDot').classList.add('ok');
+        el('healthText').textContent = `服务正常 · ${data.retrieval}`;
+      } catch (error) { el('healthText').textContent = '服务连接失败'; toast(error.message, true); }
+    }
+
+    function toggleModelFields() {
+      const remote = el('provider').value === 'openai';
+      el('remoteFields').style.display = remote ? 'block' : 'none';
+      el('modelBadge').textContent = remote ? '在线模型' : '离线模式';
+    }
+
+    async function loadModel() {
+      try {
+        const data = await api('/config/model');
+        el('provider').value = data.provider;
+        el('baseUrl').value = data.base_url;
+        el('modelName').value = data.model;
+        el('apiKey').placeholder = data.api_key_configured ? '已配置，留空保持不变' : '请输入 API Key';
+        toggleModelFields();
+      } catch (error) { toast(error.message, true); }
+    }
+
+    async function saveModel() {
+      const button = el('saveModel'); button.disabled = true; button.textContent = '保存中…';
+      try {
+        const body = { provider: el('provider').value, base_url: el('baseUrl').value, model: el('modelName').value, api_key: el('apiKey').value || null };
+        const data = await api('/config/model', { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+        el('apiKey').value = ''; el('apiKey').placeholder = data.api_key_configured ? '已配置，留空保持不变' : '请输入 API Key';
+        toast(data.provider === 'offline' ? '已切换到离线决策模型' : `已配置模型 ${data.model}`);
+      } catch (error) { toast(error.message, true); }
+      finally { button.disabled = false; button.textContent = '保存模型配置'; }
+    }
+
+    async function loadDocuments() {
+      try { const data = await api('/documents'); state.documents = data.documents || []; renderDocuments(); }
+      catch (error) { toast(error.message, true); }
+    }
+
+    function renderDocuments() {
+      const box = el('documents'); box.replaceChildren();
+      if (!state.documents.length) { const empty = document.createElement('div'); empty.className = 'empty-docs'; empty.textContent = '暂无上传文件'; box.appendChild(empty); updateScope(); return; }
+      state.documents.forEach(doc => {
+        const row = document.createElement('label'); row.className = 'doc-row'; row.title = doc.filename;
+        const check = document.createElement('input'); check.type = 'checkbox'; check.checked = state.selected.has(doc.document_id); check.disabled = doc.status !== 'ready';
+        check.addEventListener('change', () => { check.checked ? state.selected.add(doc.document_id) : state.selected.delete(doc.document_id); updateScope(); });
+        const detail = document.createElement('div');
+        const name = document.createElement('div'); name.className = 'doc-name'; name.textContent = doc.filename;
+        const meta = document.createElement('div'); meta.className = 'doc-meta'; meta.textContent = `${formatBytes(doc.size_bytes)} · ${doc.chunk_count} chunks`;
+        detail.append(name, meta);
+        const status = document.createElement('div'); status.className = 'doc-state'; status.textContent = doc.status;
+        row.append(check, detail, status); box.appendChild(row);
+      });
+      updateScope();
+    }
+
+    function updateScope() {
+      const count = state.selected.size;
+      el('scopePill').textContent = count ? `已选择 ${count} 份文档` : '内置知识库';
+    }
+
+    function formatBytes(value) { if (!value) return '0 B'; const units=['B','KB','MB']; const i=Math.min(Math.floor(Math.log(value)/Math.log(1024)),2); return `${(value/Math.pow(1024,i)).toFixed(i?1:0)} ${units[i]}`; }
+
+    function chooseFile(file) {
+      state.selectedFile = file || null;
+      el('fileName').textContent = file ? `${file.name} · ${formatBytes(file.size)}` : '尚未选择文件';
+      el('uploadButton').disabled = !file;
+    }
+
+    async function uploadFile() {
+      if (!state.selectedFile) return;
+      const button = el('uploadButton'); button.disabled = true; button.textContent = '解析与索引中…';
+      try {
+        const form = new FormData(); form.append('file', state.selectedFile);
+        const record = await api('/documents/upload', { method: 'POST', body: form });
+        state.selected.add(record.document_id); chooseFile(null); el('fileInput').value = '';
+        await loadDocuments(); toast(`已完成索引：${record.filename}`);
+      } catch (error) { toast(error.message, true); }
+      finally { button.disabled = !state.selectedFile; button.textContent = '上传并建立索引'; }
+    }
+
+    function addMessage(role, text, result = null) {
+      el('welcome')?.remove();
+      const row = document.createElement('div'); row.className = `message ${role}`;
+      const avatar = document.createElement('div'); avatar.className = 'avatar'; avatar.textContent = role === 'user' ? '你' : 'AI';
+      const bubble = document.createElement('div'); bubble.className = 'bubble';
+      const content = document.createElement('div'); content.textContent = text; bubble.appendChild(content);
+      if (result) {
+        const meta = document.createElement('div'); meta.className = 'message-meta'; meta.textContent = `状态：${result.status} · 引用 ${result.citations?.length || 0} 条`;
+        bubble.appendChild(meta);
+        if (result.citations?.length) {
+          const citations = document.createElement('div'); citations.className = 'citations';
+          result.citations.forEach(item => {
+            const card = document.createElement('div'); card.className = 'citation';
+            const title = document.createElement('strong'); title.textContent = item.title || item.source_doc_id || item.doc_id || '引用资料';
+            const detail = document.createElement('span'); detail.textContent = `第 ${item.page_start || '-'} 页 · ${item.chapter || '未命名章节'} · Chunk ${item.chunk_id || item.doc_id}`;
+            card.append(title, detail); citations.appendChild(card);
+          });
+          bubble.appendChild(citations);
+        }
+      }
+      row.append(avatar, bubble); el('messages').appendChild(row); el('messages').scrollTop = el('messages').scrollHeight;
+      return row;
+    }
+
+    function addTyping() {
+      const row = document.createElement('div'); row.className = 'message assistant typing'; row.id = 'typing';
+      const avatar = document.createElement('div'); avatar.className = 'avatar'; avatar.textContent = 'AI';
+      const bubble = document.createElement('div'); bubble.className = 'bubble'; bubble.innerHTML = '<span class="typing-dots"><span></span><span></span><span></span></span> 正在检索并核对证据';
+      row.append(avatar,bubble); el('messages').appendChild(row); el('messages').scrollTop = el('messages').scrollHeight;
+    }
+
+    async function ask(question) {
+      question = question.trim(); if (!question || state.sending) return;
+      state.sending = true; el('sendButton').disabled = true; addMessage('user', question); addTyping();
+      const priorHistory = state.history.slice(-8);
+      try {
+        const result = await api('/ask', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ question, history:priorHistory, document_ids:Array.from(state.selected) }) });
+        el('typing')?.remove(); addMessage('assistant', result.answer, result);
+        state.history.push({role:'user',content:question},{role:'assistant',content:result.answer});
+      } catch (error) { el('typing')?.remove(); addMessage('assistant', `请求失败：${error.message}`); toast(error.message, true); }
+      finally { state.sending = false; el('sendButton').disabled = false; el('question').focus(); }
+    }
+
+    el('provider').addEventListener('change', toggleModelFields);
+    el('saveModel').addEventListener('click', saveModel);
+    el('refreshDocs').addEventListener('click', loadDocuments);
+    el('fileInput').addEventListener('change', event => chooseFile(event.target.files[0]));
+    el('uploadButton').addEventListener('click', uploadFile);
+    const dropzone = el('dropzone');
+    ['dragenter','dragover'].forEach(name => dropzone.addEventListener(name, event => { event.preventDefault(); dropzone.classList.add('drag'); }));
+    ['dragleave','drop'].forEach(name => dropzone.addEventListener(name, event => { event.preventDefault(); dropzone.classList.remove('drag'); }));
+    dropzone.addEventListener('drop', event => chooseFile(event.dataTransfer.files[0]));
+    el('chatForm').addEventListener('submit', event => { event.preventDefault(); const input=el('question'); const value=input.value; input.value=''; input.style.height='auto'; ask(value); });
+    el('question').addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); el('chatForm').requestSubmit(); } });
+    el('question').addEventListener('input', event => { event.target.style.height='auto'; event.target.style.height=Math.min(event.target.scrollHeight,140)+'px'; });
+    document.querySelectorAll('.suggestion').forEach(button => button.addEventListener('click', () => { el('question').value=button.dataset.question; el('question').focus(); }));
+
+    Promise.all([loadHealth(), loadModel(), loadDocuments()]);
+  </script>
+</body>
+</html>

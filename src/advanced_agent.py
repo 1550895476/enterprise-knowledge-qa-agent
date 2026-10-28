@@ -95,6 +95,7 @@ class EnterpriseState(TypedDict, total=False):
     selected_product_id: str | None
     document_ids: list[str]
     product_id: str | None
+    decision_model: Any
     resolution: dict[str, Any]
     result: dict[str, Any]
 
@@ -118,12 +119,14 @@ class EnterpriseKnowledgeAgent:
         history: list[dict[str, str]] | None = None,
         selected_product_id: str | None = None,
         document_ids: list[str] | None = None,
+        decision_model: Any | None = None,
     ) -> AgentResult:
         state: EnterpriseState = {
             "question": question,
             "history": history or [],
             "selected_product_id": selected_product_id,
             "document_ids": document_ids or [],
+            "decision_model": decision_model,
         }
         final = self.graph.invoke(state)
         result = self._from_dict(final["result"])
@@ -181,13 +184,15 @@ class EnterpriseKnowledgeAgent:
             product_id=state.get("product_id"),
             document_ids=state.get("document_ids") or None,
         )
-        basic = KnowledgeQAAgent(scoped_tools, max_steps=self.max_steps)
+        basic = KnowledgeQAAgent(scoped_tools, model=state.get("decision_model"), max_steps=self.max_steps)
         result = basic.run(resolution["rewritten_query"], history=state.get("history", []))
         # Keep the public response tied to the user's original wording; the
         # rewritten query remains visible in the graph resolution metadata and
         # search Trace.
         result.question = state["question"]
-        if result.status == "completed" and result.citations:
+        configured_model = state.get("decision_model")
+        model_source = getattr(configured_model, "source", "offline_model")
+        if result.status == "completed" and result.citations and (model_source != "openai_compatible_model" or not result.answer.strip()):
             result.answer = self.generator.generate(resolution["rewritten_query"], result.citations)
         state["result"] = result.to_dict()
         return state

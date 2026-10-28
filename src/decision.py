@@ -151,7 +151,8 @@ class OpenAICompatibleDecisionModel(DecisionModel):
                     "你是企业知识问答 Agent 的决策模型。只输出 JSON。根据问题、历史、"
                     "已执行动作和工具观察选择下一动作。action 只能是 search/read/ask/finish。"
                     "资料冲突时必须 ask，不能猜测；无资料时 finish 并写 gaps。JSON 字段："
-                    "action, query, doc_id, answer, gaps, reason。"
+                    "action, query, doc_id, answer, gaps, reason。answer 只能基于 readings 中已读取的原文，"
+                    "并标注文档 ID、页码、章节和 Chunk ID；没有 readings 时不得生成事实答案。"
                 )},
                 {"role": "user", "content": json.dumps({"state": state, "observation": observation.__dict__ if observation else None}, ensure_ascii=False)},
             ],

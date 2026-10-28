@@ -4,7 +4,7 @@ from typing import Any
 
 try:
     from fastapi import FastAPI, File, HTTPException, UploadFile
-    from fastapi.responses import RedirectResponse
+    from fastapi.responses import FileResponse
     from pydantic import BaseModel, Field
 except ImportError:  # pragma: no cover - keeps the offline CLI dependency-free
     FastAPI = None
@@ -12,12 +12,16 @@ except ImportError:  # pragma: no cover - keeps the offline CLI dependency-free
 
 from .advanced_agent import EnterpriseKnowledgeAgent
 from .document_service import DocumentUploadError, DocumentUploadService
+from .runtime_config import ModelConfigError, RuntimeModelConfig
+from pathlib import Path
 
 
 if FastAPI is not None:
-    app = FastAPI(title="Enterprise Knowledge QA Agent", version="0.3.0")
+    app = FastAPI(title="Enterprise Knowledge QA Agent", version="0.4.0")
     agent = EnterpriseKnowledgeAgent()
     document_service = DocumentUploadService(agent.retriever)
+    model_config = RuntimeModelConfig()
+    static_root = Path(__file__).resolve().parent / "static"
 
     class AskRequest(BaseModel):
         question: str = Field(min_length=1)
@@ -25,9 +29,26 @@ if FastAPI is not None:
         product_choice: str | None = None
         document_ids: list[str] = Field(default_factory=list)
 
+    class ModelConfigRequest(BaseModel):
+        provider: str = "offline"
+        model: str = "gpt-4o-mini"
+        base_url: str = "https://api.openai.com/v1"
+        api_key: str | None = None
+
     @app.get("/", include_in_schema=False)
-    def root() -> RedirectResponse:
-        return RedirectResponse(url="/docs")
+    def root() -> FileResponse:
+        return FileResponse(static_root / "index.html", media_type="text/html")
+
+    @app.get("/config/model")
+    def get_model_config() -> dict[str, Any]:
+        return model_config.public()
+
+    @app.put("/config/model")
+    def update_model_config(request: ModelConfigRequest) -> dict[str, Any]:
+        try:
+            return model_config.update(request.provider, request.model, request.base_url, request.api_key)
+        except ModelConfigError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/health")
     def health() -> dict[str, Any]:
@@ -77,6 +98,7 @@ if FastAPI is not None:
                 request.history,
                 request.product_choice,
                 document_ids=request.document_ids,
+                decision_model=model_config.build_model(),
             ).to_dict()
         except DocumentUploadError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc

@@ -56,3 +56,9 @@ multipart 文件 → 类型/大小/PDF 头校验 → 隔离保存
 ```
 
 索引文件和状态保存在 `runtime/uploads/<document_id>/`，启动时自动恢复。`document_id` 来自 SHA-256，可对相同内容去重。检索工具按请求创建独立作用域实例，商品范围和上传文档范围通过 LangGraph 状态显式传递，避免并发请求串库。
+
+## Web 操作界面与模型配置
+
+根路径 `/` 返回无需构建工具的单页界面，支持模型配置、文件上传、文档勾选、多轮问答和引用展示。`RuntimeModelConfig` 提供线程安全的运行时配置：离线模式使用 `OfflineDecisionModel`，OpenAI-compatible 模式使用用户填写的 Base URL、模型名和 API Key。读取配置时永不返回密钥原文，密钥只驻留进程内存；服务重启后需重新填写或使用环境变量。
+
+在线模型负责检索动作与证据回答，Prompt 要求只能使用已读取的 `readings`，并引用文档 ID、页码、章节和 Chunk ID。离线模式继续使用可复现的证据生成器。

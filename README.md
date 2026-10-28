@@ -48,6 +48,15 @@ uvicorn src.api:app --host 0.0.0.0 --port 8000
 curl -X POST http://localhost:8000/ask -H "Content-Type: application/json" -d "{\"question\":\"Pro X1 怎么开机\"}"
 ```
 
+浏览器打开 `http://localhost:8000/` 可进入完整操作界面，包括：
+
+- 离线/OpenAI-compatible 模型配置；
+- PDF、TXT、Markdown 拖拽上传；
+- 上传文档选择与检索范围控制；
+- 多轮问答、状态提示及页码/章节/Chunk 引用展示。
+
+在线模型的 API Key 只保存在当前服务进程内存，不写入仓库或运行时文件。开发接口文档保留在 `/docs`。
+
 上传文件并针对该文件提问：
 
 ```bash
@@ -106,6 +115,8 @@ src/retrieval.py     BGE/Milvus 适配、混合检索、HyDE、MCP、RRF、重�
 src/storage.py       Milvus/MongoDB 适配与本地降级
 src/api.py           FastAPI 服务入口
 src/document_service.py 上传校验、持久化、索引和状态管理
+src/runtime_config.py 运行时模型配置与密钥脱敏
+src/static/index.html 可直接使用的上传与问答 Web UI
 tests/               可执行单元测试与验收测试
 examples/            输入、实际输出、Trace
 data/                合成制度、商品库和 PDF Chunk
