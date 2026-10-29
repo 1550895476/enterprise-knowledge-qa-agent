@@ -2,6 +2,8 @@
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
 langgraph==0.2.60
+# pymilvus 2.5.4 still imports pkg_resources, which was removed in newer setuptools.
+setuptools==80.9.0
 pymilvus==2.5.4
 pymongo==4.10.1
 pypdf==5.1.0

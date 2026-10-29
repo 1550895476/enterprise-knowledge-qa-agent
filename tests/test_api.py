@@ -22,6 +22,13 @@ class WebInterfaceTests(unittest.TestCase):
         self.assertIn("模型配置", response.text)
         self.assertIn('id="modelSelect"', response.text)
         self.assertIn("citation-quote", response.text)
+        self.assertIn("未能在${scope}中找到足以回答该问题的可靠资料", response.text)
+        self.assertIn("未找到可靠答案 · 没有可引用的原文", response.text)
+        self.assertIn("需要补充一些信息后才能继续查找", response.text)
+        self.assertIn("目前的信息还不足以确认你要查询的具体范围", response.text)
+        self.assertIn("由当前模型直接回答 · 未使用知识库", response.text)
+        self.assertIn("Array.isArray(result.gaps)", response.text)
+        self.assertNotIn("状态：${result.status}", response.text)
 
     def test_streaming_ask_reports_live_progress_before_result(self):
         response = self.client.post("/ask/stream", json={"question": "Pro X1 怎么开机"})
@@ -202,6 +209,8 @@ class WebInterfaceTests(unittest.TestCase):
         payload = json.loads(request.data.decode("utf-8"))
         self.assertEqual(request.full_url, "https://relay.example.com/v1/responses")
         self.assertEqual(payload["reasoning"], {"effort": "medium"})
+        self.assertIn("简单计算", payload["input"][0]["content"])
+        self.assertIn("不得依赖模型记忆直接回答", payload["input"][0]["content"])
 
     def test_hyde_expansion_uses_current_online_model(self):
         class FakeResponse:

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
-from .decision import DecisionModel, OfflineDecisionModel
+from .decision import DecisionModel, OfflineDecisionModel, answer_stable_question
 from .models import Action, AgentResult, TraceEvent, ToolObservation
 from .tools import FaultInjectingTools, KnowledgeBase
 
@@ -42,16 +42,36 @@ class KnowledgeQAAgent:
         gaps: list[str] = []
         observation: ToolObservation | None = None
         _emit_progress(progress_callback, "analyze", "正在理解问题与对话上下文")
-        action = self.model.choose(state, observation)
+        stable_answer = answer_stable_question(question)
+        action = (
+            Action("finish", answer=stable_answer, reason="稳定计算问题由安全路由直接回答，不调用模型或知识库")
+            if stable_answer
+            else self.model.choose(state, observation)
+        )
 
         for step in range(1, self.max_steps + 1):
             state["actions"].append(action.name)
             if action.name in {"ask", "finish"}:
                 _emit_progress(progress_callback, "generate", f"第 {step} 步：证据核对完成，正在生成回答", step)
-                gaps.extend(action.gaps)
-                status = "needs_confirmation" if action.name == "ask" else ("insufficient_evidence" if action.gaps else "completed")
+                normalized_action_gaps = _normalize_gaps(action.gaps)
+                gaps.extend(normalized_action_gaps)
+                status = "needs_confirmation" if action.name == "ask" else ("insufficient_evidence" if normalized_action_gaps else "completed")
                 trace.append(TraceEvent(step, "decision", action.name, None, {}, "未调用工具", None, action.reason, self.model.source))
-                return AgentResult(question, action.answer, citations, _unique(gaps), status, trace)
+                answer = action.answer.strip() if action.answer else ""
+                if not answer and action.name == "ask":
+                    answer = (
+                        "我找到了相关资料，但其中的内容或适用范围存在差异，暂时不能直接给出唯一答案。"
+                        "请补充具体的产品型号、适用部门、制度版本或使用场景，我会继续核对。"
+                        if citations
+                        else
+                        "目前的信息还不足以确认你要查询的具体范围。请补充产品型号、制度名称、适用部门"
+                        "或相关上下文，我会根据补充信息继续查找。"
+                    )
+                elif not answer and action.name == "finish" and action.gaps:
+                    answer = "未能在当前知识库中找到足以回答该问题的可靠资料。请补充相关资料或调整问题后重试。"
+                elif not answer:
+                    answer = "本次没有生成可用回答，请补充问题背景后重试。"
+                return AgentResult(question, answer, citations, _unique(gaps), status, trace)
 
             if action.name == "search":
                 params = {"query": action.query}
@@ -121,6 +141,14 @@ class KnowledgeQAAgent:
 
 def _unique(items: list[str]) -> list[str]:
     return list(dict.fromkeys(item for item in items if item))
+
+
+def _normalize_gaps(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if isinstance(value, (list, tuple, set)):
+        return [str(item) for item in value if str(item).strip()]
+    return [str(value)] if value else []
 
 
 def _emit_progress(

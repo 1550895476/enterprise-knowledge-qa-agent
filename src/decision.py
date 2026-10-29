@@ -1,13 +1,61 @@
 from __future__ import annotations
 
+import ast
 import json
 import os
+import re
 import urllib.request
 from abc import ABC, abstractmethod
 from typing import Any
 
 from .models import Action, ToolObservation
 from .tools import normalize_terms
+
+
+def answer_stable_question(question: str) -> str | None:
+    """Return deterministic answers for safe calculations before any model/KB call."""
+    expression = question.strip()
+    for token in ("请问", "帮我计算", "计算", "等于几", "等于多少", "是多少", "结果是", "？", "?", "。"):
+        expression = expression.replace(token, "")
+    expression = expression.strip()
+    if not expression or len(expression) > 80 or not re.fullmatch(r"[\d\s+\-*/().%]+", expression):
+        return None
+    try:
+        tree = ast.parse(expression, mode="eval")
+        value = _eval_arithmetic(tree.body)
+    except (SyntaxError, ValueError, ZeroDivisionError, OverflowError):
+        return None
+    rendered = str(int(value)) if isinstance(value, float) and value.is_integer() else str(value)
+    return f"{expression} = {rendered}"
+
+
+def _eval_arithmetic(node: ast.AST) -> int | float:
+    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) and not isinstance(node.value, bool):
+        if abs(node.value) > 1_000_000_000:
+            raise ValueError("number too large")
+        return node.value
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+        value = _eval_arithmetic(node.operand)
+        return value if isinstance(node.op, ast.UAdd) else -value
+    if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.Mod)):
+        left = _eval_arithmetic(node.left)
+        right = _eval_arithmetic(node.right)
+        if isinstance(node.op, ast.Add):
+            result = left + right
+        elif isinstance(node.op, ast.Sub):
+            result = left - right
+        elif isinstance(node.op, ast.Mult):
+            result = left * right
+        elif isinstance(node.op, ast.Div):
+            result = left / right
+        elif isinstance(node.op, ast.FloorDiv):
+            result = left // right
+        else:
+            result = left % right
+        if abs(result) > 1_000_000_000_000:
+            raise OverflowError("result too large")
+        return result
+    raise ValueError("unsupported expression")
 
 
 class DecisionModel(ABC):
@@ -45,6 +93,13 @@ class OfflineDecisionModel(DecisionModel):
         readings = state.get("readings", [])
 
         if observation is None:
+            direct_answer = answer_stable_question(question)
+            if direct_answer:
+                return Action(
+                    "finish",
+                    answer=direct_answer,
+                    reason="问题属于可安全计算的稳定通用知识，直接回答，无需检索知识库",
+                )
             query = self._contextual_query(question, history)
             return Action("search", query=query, reason="先检索与当前问题及上下文相关的文档")
 
@@ -227,11 +282,15 @@ class OpenAICompatibleDecisionModel(DecisionModel):
         if not self.api_key:
             raise RuntimeError("OPENAI_API_KEY 未配置，不能使用 openai 模型")
         instruction = (
-            "你是企业知识问答 Agent 的决策模型。只输出 JSON。根据问题、历史、"
-            "已执行动作和工具观察选择下一动作。action 只能是 search/read/ask/finish。"
-            "资料冲突时必须 ask，不能猜测；无资料时 finish 并写 gaps。JSON 字段："
-            "action, query, doc_id, answer, gaps, reason。answer 只能基于 readings 中已读取的原文，"
-            "并标注文档 ID、页码、章节和 Chunk ID；没有 readings 时不得生成事实答案。"
+            "你是企业知识问答 Agent 的决策模型。只输出 JSON。先判断问题是否需要企业知识库："
+            "简单计算、语言解释、稳定且低风险的通用知识或日常交流，可以直接 action=finish，给出 answer，"
+            "gaps=[]，reason 写明通用知识直答，不得伪造引用，也不要调用 search。"
+            "涉及企业制度、内部流程、产品手册、上传文档、具体型号、时效信息、用户明确要求查资料，"
+            "或你对答案不确定时，必须先 search，再根据观察 read 原文；不得依赖模型记忆直接回答。"
+            "根据问题、历史、已执行动作和工具观察选择下一动作，action 只能是 search/read/ask/finish。"
+            "资料冲突时必须 ask，不能猜测；知识库无资料时 finish 并写 gaps。JSON 字段："
+            "action, query, doc_id, answer, gaps, reason。对于需要知识库的问题，answer 只能基于 readings 中"
+            "已读取的原文，并标注文档 ID、页码、章节和 Chunk ID；没有 readings 时不得生成企业或产品事实答案。"
         )
         user_input = json.dumps({"state": state, "observation": observation.__dict__ if observation else None}, ensure_ascii=False)
         if self.protocol == "responses":
@@ -274,9 +333,16 @@ class OpenAICompatibleDecisionModel(DecisionModel):
         action_name = data.get("action")
         if action_name not in {"search", "read", "ask", "finish"}:
             raise RuntimeError(f"模型返回了无效动作：{action_name or '缺少 action'}")
+        raw_gaps = data.get("gaps", [])
+        if isinstance(raw_gaps, str):
+            normalized_gaps = [raw_gaps] if raw_gaps.strip() else []
+        elif isinstance(raw_gaps, list):
+            normalized_gaps = [str(item) for item in raw_gaps if str(item).strip()]
+        else:
+            normalized_gaps = [str(raw_gaps)] if raw_gaps else []
         return Action(
             name=action_name, query=data.get("query", ""), doc_id=data.get("doc_id", ""),
-            answer=data.get("answer", ""), gaps=data.get("gaps", []), reason=data.get("reason", "模型决策"),
+            answer=data.get("answer", ""), gaps=normalized_gaps, reason=data.get("reason", "模型决策"),
         )
 
     def _request_json(self, payload: dict[str, Any], endpoint: str) -> dict[str, Any]:

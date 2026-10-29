@@ -41,6 +41,33 @@ class AgentAcceptanceTests(unittest.TestCase):
         self.assertTrue(result.gaps)
         self.assertEqual(result.citations, [])
 
+    def test_simple_arithmetic_is_answered_without_retrieval(self):
+        class ModelMustNotBeCalled:
+            source = "must_not_be_called"
+
+            def choose(self, state, observation):
+                raise AssertionError("简单计算不应调用大模型")
+
+        result = KnowledgeQAAgent.from_default_data(model=ModelMustNotBeCalled()).run("1+1等于几？")
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.answer, "1+1 = 2")
+        self.assertEqual(result.citations, [])
+        self.assertEqual([event.action for event in result.trace], ["finish"])
+        self.assertFalse(any(event.tool for event in result.trace))
+
+    def test_string_gap_is_not_split_into_characters(self):
+        class StringGapModel:
+            source = "string_gap_test"
+
+            def choose(self, state, observation):
+                from src.models import Action
+
+                return Action("finish", answer="", gaps="知识库中未检索到相关内容", reason="资料不足")
+
+        result = KnowledgeQAAgent.from_default_data(model=StringGapModel()).run("未知问题")
+        self.assertEqual(result.status, "insufficient_evidence")
+        self.assertEqual(result.gaps, ["知识库中未检索到相关内容"])
+
     def test_paraphrase_retrieves_same_policy(self):
         result = self.agent.run("费用报账要在多长时间内提交")
         self.assertEqual(result.status, "needs_confirmation")
@@ -72,6 +99,20 @@ class AgentAcceptanceTests(unittest.TestCase):
         result = KnowledgeQAAgent.from_default_data(max_steps=1).run("密码忘了怎么办")
         self.assertEqual(result.status, "incomplete")
         self.assertIn("上限", result.gaps[0])
+
+    def test_empty_clarification_answer_gets_friendly_fallback(self):
+        class EmptyClarificationModel:
+            source = "empty_clarification_test"
+
+            def choose(self, state, observation):
+                from src.models import Action
+
+                return Action("ask", answer="", gaps=["需要确认具体型号"], reason="信息不足")
+
+        result = KnowledgeQAAgent.from_default_data(model=EmptyClarificationModel()).run("它怎么开机？")
+        self.assertEqual(result.status, "needs_confirmation")
+        self.assertIn("补充产品型号", result.answer)
+        self.assertNotIn("Agent 没有返回", result.answer)
 
     def test_progress_reports_actual_agent_stages(self):
         events = []
