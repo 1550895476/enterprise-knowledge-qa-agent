@@ -9,7 +9,22 @@
   },
   "actual_output": {
     "answer": "根据 D05（研发人员差旅管理细则，版本日期 2026-04-01），研发员工国内出差的餐补标准为150元/天，按实际出差天数计算。",
-    "citations": ["D05"],
+    "citations": [
+      {
+        "doc_id": "D05",
+        "title": "研发人员差旅管理细则",
+        "version_date": "2026-04-01",
+        "applicability": "研发员工国内出差",
+        "content": "研发员工国内出差的餐补标准为150元/天，按实际出差天数计算。",
+        "page_start": 1,
+        "page_end": 1,
+        "chapter": "",
+        "chunk_id": "D05",
+        "parent_chunk_id": null,
+        "image_refs": [],
+        "source_type": "faq"
+      }
+    ],
     "gaps": [],
     "status": "completed"
   },

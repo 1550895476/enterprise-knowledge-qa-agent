@@ -109,6 +109,7 @@
       background: #09152e; color: #f4f7ff; padding: 9px 12px; outline: none;
     }
     .model-field input:focus, .model-field select:focus { border-color: #5bbdf2; box-shadow: 0 0 0 3px rgba(91,189,242,.12); }
+    .model-field select:disabled { opacity: .62; cursor: not-allowed; }
     .model-field input::placeholder { color: #637493; }
     .model-help { color: #8296b7; font-size: 10px; line-height: 1.5; margin-top: 6px; }
     .model-status {
@@ -148,6 +149,7 @@
     .citation { background: var(--panel-soft); border: 1px solid var(--line); border-radius: 10px; padding: 9px 10px; }
     .citation strong { display: block; color: #2b4950; font-size: 10px; margin-bottom: 3px; }
     .citation span { color: var(--muted); font-size: 9px; line-height: 1.45; }
+    .citation-quote { margin-top: 7px; padding: 8px 9px; border-left: 3px solid #8ccfc5; border-radius: 4px 8px 8px 4px; background: #edf7f5; color: #3f5960; font-size: 10px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
     .typing .bubble { color: var(--muted); }
     .typing-dots span { display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: #7aa39e; margin-right: 3px; animation: pulse 1.2s infinite; }
     .typing-dots span:nth-child(2) { animation-delay: .15s; }
@@ -272,8 +274,12 @@
           <div class="model-help">不会写入仓库、浏览器存储或日志。</div>
         </div>
         <div class="model-field remote-only">
-          <label for="modelName">从可用列表选择模型</label>
-          <input id="modelName" list="modelOptions" value="gpt-4o-mini" autocomplete="off"><datalist id="modelOptions"></datalist>
+          <label for="modelSelect">从可用列表选择模型</label>
+          <select id="modelSelect" disabled><option value="">请先读取可用模型</option></select>
+        </div>
+        <div class="model-field remote-only">
+          <label for="modelName">模型名称（也可手动填写）</label>
+          <input id="modelName" value="gpt-4o-mini" autocomplete="off">
         </div>
         <div class="model-field remote-only">
           <label for="reasoningEffort">推理强度</label>
@@ -326,8 +332,16 @@
       const remote = el('provider').value !== 'offline';
       document.querySelectorAll('.remote-only').forEach(node => node.style.display = remote ? 'block' : 'none');
       el('fetchModels').disabled = !remote;
-      el('modelOptions').replaceChildren();
+      resetModelSelect();
       updateModelStatus();
+    }
+
+    function resetModelSelect() {
+      const list = el('modelSelect');
+      list.replaceChildren();
+      const placeholder = document.createElement('option');
+      placeholder.value = ''; placeholder.textContent = '请先读取可用模型';
+      list.appendChild(placeholder); list.value = ''; list.disabled = true;
     }
 
     function applyProviderPreset() {
@@ -335,9 +349,9 @@
       invalidateModelTest();
       if (provider === 'deepseek') {
         el('baseUrl').value = 'https://api.deepseek.com';
-        el('modelName').value = 'deepseek-v4-pro';
-        el('protocol').value = 'responses';
-        el('reasoningEffort').value = 'low';
+        el('modelName').value = 'deepseek-chat';
+        el('protocol').value = 'chat_completions';
+        el('reasoningEffort').value = 'none';
       } else if (provider === 'openai') {
         el('baseUrl').value = 'https://api.openai.com/v1';
         el('modelName').value = 'gpt-4o-mini';
@@ -445,12 +459,18 @@
 
     async function fetchModels() {
       const button = el('fetchModels');
+      resetModelSelect();
       button.disabled = true; button.textContent = '读取中…'; updateModelStatus('正在从服务端读取模型列表…');
       try {
         const data = await api('/config/model/models', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(modelPayload()) });
-        const list = el('modelOptions'); list.replaceChildren();
-        (data.models || []).forEach(model => { const option=document.createElement('option'); option.value=model; list.appendChild(option); });
-        if (data.models?.length && !data.models.includes(el('modelName').value)) el('modelName').value = data.models[0];
+        const list = el('modelSelect'); list.replaceChildren();
+        if (data.models?.length) {
+          (data.models || []).forEach(model => { const option=document.createElement('option'); option.value=model; option.textContent=model; list.appendChild(option); });
+          const selected = data.models.includes(el('modelName').value) ? el('modelName').value : data.models[0];
+          list.value = selected; list.disabled = false; el('modelName').value = selected;
+        } else {
+          resetModelSelect();
+        }
         invalidateModelTest();
         updateModelStatus(data.ok
           ? `已读取 ${data.count} 个模型 · ${data.latency_ms} ms。请在“从可用列表选择模型”中选择后测试。`
@@ -537,9 +557,12 @@
           const citations = document.createElement('div'); citations.className = 'citations';
           result.citations.forEach(item => {
             const card = document.createElement('div'); card.className = 'citation';
-            const title = document.createElement('strong'); title.textContent = item.title || item.source_doc_id || item.doc_id || '引用资料';
+            const sourceId = item.source_doc_id || item.doc_id || item.chunk_id || '未知文档';
+            const title = document.createElement('strong'); title.textContent = `${sourceId} · ${item.title || '引用资料'}`;
             const detail = document.createElement('span'); detail.textContent = `第 ${item.page_start || '-'} 页 · ${item.chapter || '未命名章节'} · Chunk ${item.chunk_id || item.doc_id}`;
-            card.append(title, detail); citations.appendChild(card);
+            const quote = document.createElement('div'); quote.className = 'citation-quote';
+            quote.textContent = `原文：${item.content || item.snippet || '当前引用未返回原文片段'}`;
+            card.append(title, detail, quote); citations.appendChild(card);
           });
           bubble.appendChild(citations);
         }
@@ -551,8 +574,53 @@
     function addTyping() {
       const row = document.createElement('div'); row.className = 'message assistant typing'; row.id = 'typing';
       const avatar = document.createElement('div'); avatar.className = 'avatar'; avatar.textContent = 'AI';
-      const bubble = document.createElement('div'); bubble.className = 'bubble'; bubble.innerHTML = '<span class="typing-dots"><span></span><span></span><span></span></span> 正在检索并核对证据';
+      const bubble = document.createElement('div'); bubble.className = 'bubble';
+      const dots = document.createElement('span'); dots.className = 'typing-dots'; dots.innerHTML = '<span></span><span></span><span></span>';
+      const progress = document.createElement('span'); progress.id = 'progressText'; progress.textContent = '正在连接 Agent…';
+      bubble.append(dots, document.createTextNode(' '), progress);
       row.append(avatar,bubble); el('messages').appendChild(row); el('messages').scrollTop = el('messages').scrollHeight;
+    }
+
+    function updateProgress(message) {
+      const node = el('progressText');
+      if (node && message) node.textContent = message;
+    }
+
+    async function askWithProgress(payload) {
+      const response = await fetch('/ask/stream', {
+        method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload),
+      });
+      if (response.status === 404 || response.status === 405) {
+        updateProgress('当前服务需要重启以启用实时进度，正在等待回答…');
+        return api('/ask', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+      }
+      if (!response.ok) {
+        let detail = `请求失败 (${response.status})`;
+        try { const data = await response.json(); detail = data.detail || detail; } catch {}
+        throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
+      }
+      if (!response.body) return api('/ask', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = ''; let finalResult = null;
+      const consume = line => {
+        if (!line.trim()) return;
+        const event = JSON.parse(line);
+        if (event.type === 'progress') updateProgress(event.data?.message);
+        else if (event.type === 'result') finalResult = event.data;
+        else if (event.type === 'error') throw new Error(event.message || 'Agent 执行失败');
+      };
+      while (true) {
+        const {value, done} = await reader.read();
+        buffer += decoder.decode(value || new Uint8Array(), {stream: !done});
+        const lines = buffer.split('\n'); buffer = lines.pop() || '';
+        lines.forEach(consume);
+        if (done) break;
+      }
+      if (buffer.trim()) consume(buffer);
+      if (!finalResult) throw new Error('Agent 未返回最终结果');
+      return finalResult;
     }
 
     async function ask(question) {
@@ -560,7 +628,7 @@
       state.sending = true; el('sendButton').disabled = true; addMessage('user', question); addTyping();
       const priorHistory = state.history.slice(-8);
       try {
-        const result = await api('/ask', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ question, history:priorHistory, document_ids:Array.from(state.selected) }) });
+        const result = await askWithProgress({ question, history:priorHistory, document_ids:Array.from(state.selected) });
         el('typing')?.remove(); addMessage('assistant', result.answer, result);
         state.history.push({role:'user',content:question},{role:'assistant',content:result.answer});
       } catch (error) { el('typing')?.remove(); addMessage('assistant', `请求失败：${error.message}`); toast(error.message, true); }
@@ -574,7 +642,11 @@
     el('openModelConfig').addEventListener('click', openModelModal);
     el('closeModelConfig').addEventListener('click', closeModelModal);
     el('cancelModelConfig').addEventListener('click', closeModelModal);
-    el('modelModal').addEventListener('click', event => { if (event.target === el('modelModal')) closeModelModal(); });
+    el('modelSelect').addEventListener('change', event => {
+      if (!event.target.value) return;
+      el('modelName').value = event.target.value;
+      invalidateModelTest(); updateModelStatus(`已选择模型：${event.target.value}。请测试后启用。`);
+    });
     document.addEventListener('keydown', event => { if (event.key === 'Escape' && el('modelModal').classList.contains('open')) closeModelModal(); });
     el('fetchModels').addEventListener('click', fetchModels);
     el('testModel').addEventListener('click', testModel);

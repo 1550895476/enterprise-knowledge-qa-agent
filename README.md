@@ -117,7 +117,7 @@ python -m unittest discover -s tests -v
 src/                 Agent、模型适配器、知识库工具、CLI
 src/advanced_agent.py 商品消歧、LangGraph 编排和增强链路
 src/ingestion.py     PDF 页面解析、结构感知父子 Chunk
-src/retrieval.py     BGE/Milvus 适配、混合检索、HyDE、MCP、RRF、重排、Top-p
+src/retrieval.py     BGE/Milvus 适配、稠密/稀疏混合检索、模型 HyDE、RRF、重排、Top-p
 src/storage.py       Milvus/MongoDB 适配与本地降级
 src/api.py           FastAPI 服务入口
 src/document_service.py 上传校验、持久化、索引和状态管理

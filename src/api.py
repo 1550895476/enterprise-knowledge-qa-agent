@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
+from queue import Queue
+from threading import Thread
 from typing import Any
 
 try:
     from fastapi import FastAPI, File, HTTPException, UploadFile
-    from fastapi.responses import FileResponse
+    from fastapi.responses import FileResponse, StreamingResponse
     from pydantic import BaseModel, Field
 except ImportError:  # pragma: no cover - keeps the offline CLI dependency-free
     FastAPI = None
@@ -137,6 +140,45 @@ if FastAPI is not None:
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
         except Exception as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    @app.post("/ask/stream")
+    def ask_stream(request: AskRequest) -> StreamingResponse:
+        events: Queue[dict[str, Any] | None] = Queue()
+
+        def publish(progress: dict[str, Any]) -> None:
+            events.put({"type": "progress", "data": progress})
+
+        def run_agent() -> None:
+            try:
+                if request.document_ids:
+                    document_service.require_ready(request.document_ids)
+                result = agent.run(
+                    request.question,
+                    request.history,
+                    request.product_choice,
+                    document_ids=request.document_ids,
+                    decision_model=model_config.build_model(),
+                    progress_callback=publish,
+                )
+                events.put({"type": "result", "data": result.to_dict()})
+            except Exception as exc:
+                events.put({"type": "error", "message": str(exc)})
+            finally:
+                events.put(None)
+
+        def event_stream():
+            Thread(target=run_agent, daemon=True).start()
+            while True:
+                event = events.get()
+                if event is None:
+                    break
+                yield json.dumps(event, ensure_ascii=False) + "\n"
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="application/x-ndjson",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 else:
     app = None
 

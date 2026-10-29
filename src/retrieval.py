@@ -5,10 +5,11 @@ import hashlib
 import math
 import re
 import threading
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from .storage import MilvusVectorStore
 from .tools import normalize_terms
@@ -38,10 +39,10 @@ class RetrievalResult:
     candidates: list[dict[str, Any]]
     query: str
     hyde_query: str
-    mcp_count: int
     confidence: float
     conflicts: list[dict[str, Any]]
     strategy: dict[str, Any]
+    pipeline_trace: list[dict[str, Any]] = field(default_factory=list)
 
 
 class BGEEmbeddingProvider:
@@ -126,6 +127,10 @@ class HybridRetriever:
         document_ids: list[str] | None = None,
         top_p: float = 0.85,
         limit: int = 8,
+        hyde_query: str | None = None,
+        query_expansion_backend: str = "offline_model",
+        hyde_generator: Callable[[str], str] | None = None,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> RetrievalResult:
         with self._lock:
             scoped = list(self.chunks)
@@ -134,34 +139,189 @@ class HybridRetriever:
             scoped = [chunk for chunk in scoped if chunk.doc_id in allowed]
         elif product_id:
             scoped = [chunk for chunk in scoped if product_id in chunk.doc_id]
-        hyde_query = self._hyde(query)
-        dense = self._rank(hyde_query, scoped, mode="dense")
-        sparse = self._rank(query, scoped, mode="sparse")
-        mcp = self._mcp_rank(query, scoped)
-        fused = self._rrf_fuse([dense, sparse, mcp])
+
+        pipeline_trace: list[dict[str, Any]] = []
+
+        self._emit_progress(progress_callback, "dense_retrieve", "正在使用原始问题执行 Dense 稠密检索", {"query": query})
+        started = time.perf_counter()
+        dense = self._rank(query, scoped, mode="dense", route="dense")
+        self._record_stage(
+            pipeline_trace,
+            progress_callback,
+            "dense_retrieve",
+            "dense_vector_search",
+            {"query": query},
+            f"Dense 稠密检索完成，命中 {len(dense)} 个候选",
+            started,
+        )
+
+        self._emit_progress(progress_callback, "sparse_retrieve", "正在使用原始问题执行 Sparse 关键词检索", {"query": query})
+        started = time.perf_counter()
+        sparse = self._rank(query, scoped, mode="sparse", route="sparse")
+        self._record_stage(
+            pipeline_trace,
+            progress_callback,
+            "sparse_retrieve",
+            "sparse_vector_search",
+            {"query": query},
+            f"Sparse 关键词检索完成，命中 {len(sparse)} 个候选",
+            started,
+        )
+
+        self._emit_progress(
+            progress_callback,
+            "hyde_generate",
+            f"正在使用当前模型生成 HyDE 假设答案（{query_expansion_backend}）",
+            {"query": query, "model_source": query_expansion_backend},
+        )
+        started = time.perf_counter()
+        expansion_status = "completed"
+        expansion_error = ""
+        if hyde_query is None:
+            try:
+                hyde_query = (hyde_generator(query) if hyde_generator else self._hyde(query)).strip()
+                if not hyde_query:
+                    raise ValueError("模型返回了空的 HyDE 内容")
+            except Exception as exc:
+                expansion_error = f"{type(exc).__name__}: {exc}"
+                hyde_query = self._hyde(query)
+                query_expansion_backend = f"{query_expansion_backend}:offline_fallback"
+                expansion_status = "degraded"
+        hyde_summary = (
+            "HyDE 模型生成失败，已使用离线模板继续"
+            if expansion_status == "degraded"
+            else "HyDE 假设答案生成完成"
+        )
+        self._record_stage(
+            pipeline_trace,
+            progress_callback,
+            "hyde_generate",
+            "active_model",
+            {"query": query, "model_source": query_expansion_backend},
+            hyde_summary,
+            started,
+            status=expansion_status,
+            details={"hyde_query": hyde_query, "error": expansion_error},
+        )
+
+        self._emit_progress(progress_callback, "hyde_retrieve", "正在使用 HyDE 假设答案执行 Dense 稠密检索", {"hyde_query": hyde_query})
+        started = time.perf_counter()
+        hyde_dense = self._rank(hyde_query, scoped, mode="dense", route="hyde")
+        self._record_stage(
+            pipeline_trace,
+            progress_callback,
+            "hyde_retrieve",
+            "dense_vector_search",
+            {"query": hyde_query},
+            f"HyDE 稠密检索完成，命中 {len(hyde_dense)} 个候选",
+            started,
+        )
+
+        self._emit_progress(progress_callback, "rrf_fusion", "正在对三路召回结果执行 RRF 去重融合")
+        started = time.perf_counter()
+        fused = self._rrf_fuse([dense, sparse, hyde_dense])
+        self._record_stage(
+            pipeline_trace,
+            progress_callback,
+            "rrf_fusion",
+            "rrf_fusion",
+            {"routes": ["dense", "sparse", "hyde"], "k": 60},
+            f"RRF 融合完成，去重后保留 {len(fused)} 个候选",
+            started,
+        )
+
+        self._emit_progress(progress_callback, "rerank", "正在使用重排模型统一精排并按 Top-p 截取")
+        started = time.perf_counter()
         for item in fused:
             item["rerank_score"] = round(self.reranker.score(query, item["content"] + " " + item["chapter"]), 4)
             item["trust_score"] = self._trust_score(item)
             item["final_score"] = round(0.6 * item["rerank_score"] + 0.4 * item["trust_score"], 4)
         fused.sort(key=lambda item: (-item["final_score"], item["chunk_id"]))
         selected = self._top_p(fused[:limit], top_p)
+        self._record_stage(
+            pipeline_trace,
+            progress_callback,
+            "rerank",
+            "bge_reranker",
+            {"query": query, "top_p": top_p, "limit": limit},
+            f"统一重排完成，Top-p 选出 {len(selected)} 个候选",
+            started,
+        )
+
+        self._emit_progress(progress_callback, "conflict_check", "正在核对版本、适用范围与内容冲突")
+        started = time.perf_counter()
+        conflicts = self._detect_conflicts(selected)
+        conflict_summary = f"冲突检查完成，发现 {len(conflicts)} 组冲突" if conflicts else "冲突检查完成，未发现证据冲突"
+        self._record_stage(
+            pipeline_trace,
+            progress_callback,
+            "conflict_check",
+            "metadata_conflict_detector",
+            {"candidate_count": len(selected)},
+            conflict_summary,
+            started,
+            details={"conflict_count": len(conflicts)},
+        )
+
+        for index, event in enumerate(pipeline_trace):
+            event["next_action"] = pipeline_trace[index + 1]["action"] if index + 1 < len(pipeline_trace) else "observe_search_result"
         return RetrievalResult(
             candidates=selected,
             query=query,
             hyde_query=hyde_query,
-            mcp_count=len(mcp),
             confidence=round(selected[0]["final_score"] if selected else 0.0, 4),
-            conflicts=self._detect_conflicts(selected),
+            conflicts=conflicts,
             strategy={
                 "dense_backend": self.embedder.backend,
                 "reranker_backend": self.reranker.backend,
+                "routes": ["dense", "sparse", "hyde"],
+                "query_expansion": query_expansion_backend,
                 "fusion": "RRF(k=60)",
                 "top_p": top_p,
                 "metadata_rank": "version_date + published_at + applicability",
             },
+            pipeline_trace=pipeline_trace,
         )
 
-    def _rank(self, query: str, chunks: list[Chunk], mode: str) -> list[dict[str, Any]]:
+    def _emit_progress(
+        self,
+        callback: Callable[[dict[str, Any]], None] | None,
+        stage: str,
+        message: str,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        if callback:
+            callback({"stage": stage, "message": message, "step": None, "details": details or {}})
+
+    def _record_stage(
+        self,
+        trace: list[dict[str, Any]],
+        callback: Callable[[dict[str, Any]], None] | None,
+        action: str,
+        tool: str,
+        parameters: dict[str, Any],
+        summary: str,
+        started: float,
+        status: str = "completed",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        duration_ms = max(0, round((time.perf_counter() - started) * 1000))
+        event = {
+            "action": action,
+            "tool": tool,
+            "parameters": parameters,
+            "result_summary": summary,
+            "next_action": None,
+            "decision_basis": "混合检索流水线按已配置策略继续",
+            "decision_source": "retrieval_pipeline",
+            "status": status,
+            "duration_ms": duration_ms,
+        }
+        trace.append(event)
+        progress_details = {"tool": tool, "status": status, "duration_ms": duration_ms, **(details or {})}
+        self._emit_progress(callback, action, summary, progress_details)
+
+    def _rank(self, query: str, chunks: list[Chunk], mode: str, route: str | None = None) -> list[dict[str, Any]]:
         query_terms = normalize_terms(query)
         query_vector = self.embedder.dense(query)
         scored = []
@@ -173,12 +333,7 @@ class HybridRetriever:
             if score > 0:
                 scored.append((score, chunk))
         scored.sort(key=lambda pair: (-pair[0], pair[1].chunk_id))
-        return [self._candidate(chunk, score, mode) for score, chunk in scored]
-
-    def _mcp_rank(self, query: str, chunks: list[Chunk]) -> list[dict[str, Any]]:
-        # MCP retrieval is represented as a separately attributed route. In a
-        # production deployment this method is replaced by the MCP connector.
-        return self._rank(query + " 产品手册", chunks, mode="sparse")
+        return [self._candidate(chunk, score, route or mode) for score, chunk in scored]
 
     def _rrf_fuse(self, lists: list[list[dict[str, Any]]], k: int = 60) -> list[dict[str, Any]]:
         merged: dict[str, dict[str, Any]] = {}

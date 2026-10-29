@@ -7,6 +7,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from .models import Action, ToolObservation
+from .tools import normalize_terms
 
 
 class DecisionModel(ABC):
@@ -15,6 +16,10 @@ class DecisionModel(ABC):
     @abstractmethod
     def choose(self, state: dict[str, Any], observation: ToolObservation | None) -> Action:
         raise NotImplementedError
+
+    def expand_query(self, query: str) -> str:
+        """Generate a HyDE-style hypothetical answer with the active model."""
+        return query
 
 
 class OfflineDecisionModel(DecisionModel):
@@ -25,6 +30,10 @@ class OfflineDecisionModel(DecisionModel):
     """
 
     source = "offline_model"
+
+    def expand_query(self, query: str) -> str:
+        terms = "、".join(sorted(normalize_terms(query)))
+        return f"{query}。可能涉及：{terms}。需要从适用文档中核对事实、版本、适用范围和原文依据。"
 
     def choose(self, state: dict[str, Any], observation: ToolObservation | None) -> Action:
         question = state["question"]
@@ -98,10 +107,11 @@ class OfflineDecisionModel(DecisionModel):
         readings = state.get("readings", [])
         if not readings:
             return Action("finish", answer="没有可核验的原文，暂不能给出可靠答案。", gaps=["缺少原文证据"], reason=reason)
-        if self._has_conflict(readings):
+        conflicts = self._find_conflicts(readings)
+        if conflicts:
             return Action(
                 "ask",
-                answer="资料存在冲突：不同文档给出了不同规定，且当前资料没有明确适用范围或优先级。请确认你适用的制度、组织范围或生效版本后再确定答案。",
+                answer=self._format_conflict_answer(conflicts),
                 gaps=["需要确认适用范围与制度优先级"],
                 reason="原文中的关键数值或结论互相冲突，不能擅自择一",
             )
@@ -109,14 +119,39 @@ class OfflineDecisionModel(DecisionModel):
         return Action("finish", answer=answer, reason=reason)
 
     def _has_conflict(self, readings: list[dict[str, Any]]) -> bool:
-        values: dict[str, set[str]] = {}
+        return bool(self._find_conflicts(readings))
+
+    def _find_conflicts(self, readings: list[dict[str, Any]]) -> dict[str, list[dict[str, str]]]:
+        evidence: dict[str, list[dict[str, str]]] = {}
         for item in readings:
             content = item["content"]
             for key in ("报销期限", "餐补标准"):
                 found = self._extract_value(content, key)
                 if found:
-                    values.setdefault(key, set()).add(found)
-        return any(len(found) > 1 for found in values.values())
+                    evidence.setdefault(key, []).append({
+                        "doc_id": item.get("source_doc_id") or item["doc_id"],
+                        "title": item.get("title", "未命名文档"),
+                        "version_date": item.get("version_date", "未知版本"),
+                        "value": found,
+                    })
+        return {
+            key: items
+            for key, items in evidence.items()
+            if len({item["value"] for item in items}) > 1
+        }
+
+    def _format_conflict_answer(self, conflicts: dict[str, list[dict[str, str]]]) -> str:
+        groups = []
+        for fact, items in conflicts.items():
+            statements = "；".join(
+                f"{item['doc_id']}《{item['title']}》（版本日期 {item['version_date']}）规定 {item['value']}"
+                for item in items
+            )
+            groups.append(f"{fact}存在冲突：{statements}")
+        return (
+            "资料存在冲突：" + "；".join(groups) +
+            "。当前资料没有明确适用范围或优先级，请确认你适用的制度、组织范围或生效版本后再确定答案。"
+        )
 
     def _extract_value(self, content: str, key: str) -> str | None:
         import re
@@ -150,6 +185,43 @@ class OpenAICompatibleDecisionModel(DecisionModel):
         self.protocol = protocol
         self.reasoning_effort = reasoning_effort
         self.response_format = response_format
+
+    def expand_query(self, query: str) -> str:
+        instruction = (
+            "你是企业知识库检索的 HyDE 查询扩展器。根据用户问题生成一段简短的假设性答案，"
+            "包含可能出现于制度或产品手册中的关键术语、适用范围和事实表达。"
+            "只输出扩展文本，不引用不存在的文档，不输出 JSON。"
+        )
+        if self.protocol == "responses":
+            payload: dict[str, Any] = {
+                "model": self.model,
+                "input": [
+                    {"role": "system", "content": instruction},
+                    {"role": "user", "content": query},
+                ],
+                "max_output_tokens": 300,
+            }
+            endpoint = "responses"
+            if self.reasoning_effort != "none":
+                payload["reasoning"] = {"effort": self.reasoning_effort}
+        else:
+            payload = {
+                "model": self.model,
+                "temperature": 0.2,
+                "max_tokens": 300,
+                "messages": [
+                    {"role": "system", "content": instruction},
+                    {"role": "user", "content": query},
+                ],
+            }
+            endpoint = "chat/completions"
+            if self.reasoning_effort != "none":
+                payload["reasoning_effort"] = self.reasoning_effort
+        result = self._request_json(payload, endpoint)
+        expanded = self._response_content(result).strip()
+        if not expanded:
+            raise RuntimeError("模型接口请求成功，但没有返回 HyDE 文本；请核对模型名称和接口协议")
+        return expanded
 
     def choose(self, state: dict[str, Any], observation: ToolObservation | None) -> Action:
         if not self.api_key:
@@ -190,25 +262,51 @@ class OpenAICompatibleDecisionModel(DecisionModel):
                 payload["reasoning_effort"] = self.reasoning_effort
             if self.response_format == "json_object":
                 payload["response_format"] = {"type": "json_object"}
-        request = urllib.request.Request(
-            f"{self.base_url}/{endpoint}",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(request, timeout=45) as response:
-            result = json.loads(response.read().decode("utf-8"))
+        result = self._request_json(payload, endpoint)
         content = self._response_content(result)
         content = content.strip().removeprefix("```json").removesuffix("```").strip()
-        data = json.loads(content)
+        if not content:
+            raise RuntimeError("模型接口请求成功，但没有返回决策内容；请核对模型名称和接口协议")
+        try:
+            data = json.loads(content)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("模型返回了内容，但不是 Agent 所需的 JSON；请启用 JSON Object 输出或更换兼容模型") from exc
+        action_name = data.get("action")
+        if action_name not in {"search", "read", "ask", "finish"}:
+            raise RuntimeError(f"模型返回了无效动作：{action_name or '缺少 action'}")
         return Action(
-            name=data["action"], query=data.get("query", ""), doc_id=data.get("doc_id", ""),
+            name=action_name, query=data.get("query", ""), doc_id=data.get("doc_id", ""),
             answer=data.get("answer", ""), gaps=data.get("gaps", []), reason=data.get("reason", "模型决策"),
         )
 
+    def _request_json(self, payload: dict[str, Any], endpoint: str) -> dict[str, Any]:
+        request = urllib.request.Request(
+            f"{self.base_url}/{endpoint}",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json", "Accept": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=45) as response:
+            raw = response.read().decode("utf-8").strip()
+        if not raw:
+            protocol_name = "Responses API" if self.protocol == "responses" else "Chat Completions"
+            raise RuntimeError(
+                f"模型接口返回了空响应。当前使用 {protocol_name}，请在模型配置中改用服务商支持的协议后重新测试"
+            )
+        try:
+            result = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("模型接口返回的不是 JSON；请检查 Base URL 是否指向 OpenAI-compatible API 根路径") from exc
+        if not isinstance(result, dict):
+            raise RuntimeError("模型接口返回格式错误：响应必须是 JSON Object")
+        return result
+
     def _response_content(self, payload: dict[str, Any]) -> str:
         if self.protocol == "chat_completions":
-            return payload["choices"][0]["message"]["content"]
+            try:
+                return str(payload["choices"][0]["message"]["content"] or "")
+            except (KeyError, IndexError, TypeError) as exc:
+                raise RuntimeError("Chat Completions 响应缺少 choices[0].message.content") from exc
         if payload.get("output_text"):
             return str(payload["output_text"])
         for item in payload.get("output", []):
@@ -216,5 +314,5 @@ class OpenAICompatibleDecisionModel(DecisionModel):
                 value = content.get("text") or content.get("output_text")
                 if value:
                     return str(value)
-        raise ValueError("Responses API 未返回可解析的 output_text")
+        raise RuntimeError("Responses API 响应缺少可解析的 output_text；该模型可能不支持 Responses API")
 

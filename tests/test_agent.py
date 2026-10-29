@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 from src.agent import KnowledgeQAAgent
-from src.advanced_agent import EnterpriseKnowledgeAgent
+from src.advanced_agent import AdvancedTools, EnterpriseKnowledgeAgent
 from src.document_service import DocumentUploadError, DocumentUploadService
 from src.ingestion import ParsedPage, StructureAwareChunker
 from src.retrieval import HybridRetriever
@@ -28,6 +28,11 @@ class AgentAcceptanceTests(unittest.TestCase):
         self.assertIn("冲突", result.answer)
         self.assertIn("D01", {item["doc_id"] for item in result.citations})
         self.assertIn("D02", {item["doc_id"] for item in result.citations})
+        self.assertIn("D01", result.answer)
+        self.assertIn("30天", result.answer)
+        self.assertIn("D02", result.answer)
+        self.assertIn("15天", result.answer)
+        self.assertTrue(all(item["content"] for item in result.citations))
         self.assertNotIn("是15天", result.answer)
 
     def test_out_of_scope_reports_gap(self):
@@ -68,6 +73,18 @@ class AgentAcceptanceTests(unittest.TestCase):
         self.assertEqual(result.status, "incomplete")
         self.assertIn("上限", result.gaps[0])
 
+    def test_progress_reports_actual_agent_stages(self):
+        events = []
+        result = self.agent.run("密码忘了怎么办", progress_callback=events.append)
+        self.assertEqual(result.status, "completed")
+        stages = [event["stage"] for event in events]
+        self.assertIn("analyze", stages)
+        self.assertIn("search", stages)
+        self.assertIn("read", stages)
+        self.assertIn("generate", stages)
+        self.assertLess(stages.index("search"), stages.index("read"))
+        self.assertTrue(any("D04" in event["message"] for event in events if event["stage"] == "read"))
+
 
 class ToolTests(unittest.TestCase):
     def test_document_data_is_synthetic_and_loadable(self):
@@ -76,6 +93,17 @@ class ToolTests(unittest.TestCase):
         self.assertEqual(len(docs), 5)
         self.assertTrue(all(item["doc_id"].startswith("D") for item in docs))
         self.assertEqual(len(KnowledgeBase(path).documents), 5)
+
+    def test_example_outputs_keep_verifiable_citation_content(self):
+        root = Path(__file__).parents[1] / "examples"
+        for name in ("01-normal.json", "02-conflict.json", "04-paraphrase.json", "05-context.json", "06-tool-failure.json", "07-advanced-product.json"):
+            payload = json.loads((root / name).read_text(encoding="utf-8"))
+            citations = payload["actual_output"]["citations"]
+            self.assertTrue(citations, name)
+            self.assertTrue(all(item.get("content") for item in citations), name)
+        upload_payload = json.loads((root / "08-upload-and-ask.json").read_text(encoding="utf-8"))
+        upload_citations = upload_payload["ask"]["actual_output"]["citations"]
+        self.assertTrue(all(item.get("content") for item in upload_citations))
 
     def test_structure_aware_chunking_keeps_parent_page_and_image(self):
         chunks = StructureAwareChunker(max_chars=80).chunk(
@@ -91,8 +119,73 @@ class ToolTests(unittest.TestCase):
         result = HybridRetriever(root / "data" / "chunks.json").retrieve("Pro X1 怎么开机", product_id="P100-X1")
         self.assertTrue(result.candidates)
         self.assertIn("RRF(k=60)", result.strategy["fusion"])
+        self.assertEqual(result.strategy["routes"], ["dense", "sparse", "hyde"])
+        self.assertEqual(
+            [event["action"] for event in result.pipeline_trace],
+            ["dense_retrieve", "sparse_retrieve", "hyde_generate", "hyde_retrieve", "rrf_fusion", "rerank", "conflict_check"],
+        )
         self.assertTrue(result.candidates[0]["retrieval_routes"])
         self.assertIn("page_start", result.candidates[0])
+
+    def test_hyde_uses_current_decision_model_without_mcp_route(self):
+        class CurrentModel:
+            source = "current_test_model"
+
+            def __init__(self):
+                self.queries = []
+
+            def expand_query(self, query):
+                self.queries.append(query)
+                return "Pro X1 开机时需要核对电源键位置和按压秒数"
+
+        root = Path(__file__).parents[1]
+        current_model = CurrentModel()
+        progress = []
+        tools = AdvancedTools(
+            HybridRetriever(root / "data" / "chunks.json"),
+            query_expander=current_model,
+            progress_callback=progress.append,
+        )
+        tools.set_scope(product_id="P100-X1")
+        observation = tools.search("Pro X1 怎么开机")
+        strategy = observation.data["retrieval"]["strategy"]
+        self.assertEqual(current_model.queries, ["Pro X1 怎么开机"])
+        self.assertEqual(strategy["query_expansion"], "current_test_model")
+        self.assertEqual(strategy["routes"], ["dense", "sparse", "hyde"])
+        self.assertIn("路线=dense+sparse+hyde", observation.summary)
+        actions = [event["action"] for event in observation.data["pipeline_trace"]]
+        self.assertEqual(
+            actions,
+            ["dense_retrieve", "sparse_retrieve", "hyde_generate", "hyde_retrieve", "rrf_fusion", "rerank", "conflict_check"],
+        )
+        stages = [event["stage"] for event in progress]
+        self.assertLess(stages.index("dense_retrieve"), stages.index("hyde_generate"))
+        self.assertLess(stages.index("hyde_generate"), stages.index("hyde_retrieve"))
+        self.assertFalse(any("mcp" in str(value).lower() for value in (strategy, observation.summary, actions)))
+
+        class FailingModel(CurrentModel):
+            source = "failing_current_model"
+
+            def expand_query(self, query):
+                raise TimeoutError("model timeout")
+
+        fallback_tools = AdvancedTools(HybridRetriever(root / "data" / "chunks.json"), query_expander=FailingModel())
+        fallback_tools.set_scope(product_id="P100-X1")
+        fallback = fallback_tools.search("Pro X1 怎么开机")
+        self.assertEqual(fallback.data["retrieval"]["strategy"]["query_expansion"], "failing_current_model:offline_fallback")
+        hyde_event = next(event for event in fallback.data["pipeline_trace"] if event["action"] == "hyde_generate")
+        self.assertEqual(hyde_event["status"], "degraded")
+        self.assertIn("失败", hyde_event["result_summary"])
+
+    def test_advanced_trace_keeps_dense_and_hyde_as_separate_actions(self):
+        result = EnterpriseKnowledgeAgent().run("Pro X1 怎么开机")
+        actions = [event.action for event in result.trace]
+        self.assertIn("dense_retrieve", actions)
+        self.assertIn("hyde_generate", actions)
+        self.assertIn("hyde_retrieve", actions)
+        self.assertLess(actions.index("dense_retrieve"), actions.index("hyde_generate"))
+        self.assertLess(actions.index("hyde_generate"), actions.index("hyde_retrieve"))
+        self.assertTrue(all(event.duration_ms is not None for event in result.trace if event.kind == "retrieval_stage"))
 
     def test_advanced_pipeline_resolves_product_before_retrieval(self):
         agent = EnterpriseKnowledgeAgent()

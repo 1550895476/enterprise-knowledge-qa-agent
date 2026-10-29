@@ -134,18 +134,53 @@ class RuntimeModelConfig:
         started = time.perf_counter()
         try:
             with urllib.request.urlopen(request, timeout=max(3, min(timeout_seconds, 60))) as response:
-                raw = response.read().decode("utf-8")
-                data = json.loads(raw)
+                raw = response.read().decode("utf-8").strip()
+                latency_ms = round((time.perf_counter() - started) * 1000)
+                if not raw:
+                    return {
+                        "ok": False,
+                        "provider": provider,
+                        "model": model,
+                        "base_url": base_url,
+                        "protocol": protocol,
+                        "latency_ms": latency_ms,
+                        "http_status": response.status,
+                        "message": "接口返回空响应，不能用于问答。请核对模型名称，或切换 Chat Completions / Responses API 后重试",
+                    }
+                try:
+                    data = json.loads(raw)
+                except json.JSONDecodeError:
+                    return {
+                        "ok": False,
+                        "provider": provider,
+                        "model": model,
+                        "base_url": base_url,
+                        "protocol": protocol,
+                        "latency_ms": latency_ms,
+                        "http_status": response.status,
+                        "message": "接口返回的不是 JSON，请检查 Base URL 是否为 OpenAI-compatible API 根路径",
+                    }
                 content = self._response_content(data, protocol)
+                if not content.strip():
+                    return {
+                        "ok": False,
+                        "provider": provider,
+                        "model": model,
+                        "base_url": base_url,
+                        "protocol": protocol,
+                        "latency_ms": latency_ms,
+                        "http_status": response.status,
+                        "message": "接口未返回可用文本，当前模型可能不支持所选协议",
+                    }
                 return {
                     "ok": True,
                     "provider": provider,
                     "model": data.get("model", model),
                     "base_url": base_url,
                     "protocol": protocol,
-                    "latency_ms": round((time.perf_counter() - started) * 1000),
+                    "latency_ms": latency_ms,
                     "http_status": response.status,
-                    "response_preview": content.strip()[:120] or "请求成功（响应正文为空）",
+                    "response_preview": content.strip()[:120],
                 }
         except urllib.error.HTTPError as exc:
             message = self._safe_error_message(exc)

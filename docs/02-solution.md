@@ -37,7 +37,7 @@
 
 1. `ProductMatcher` 结合历史会话识别商品别名，并与 `data/products.json` 标准商品库匹配；多个相似型号返回选择项，出现型号语义但无法确认时直接追问，不调用检索。
 2. `StructureAwareChunker` 按 PDF 页、标题层级、Layout 坐标和图片引用生成父 Chunk/子 Chunk；过短文本可在切片阶段合并，图片通过 `image_refs` 保留，图片摘要器可注入真实多模态模型。
-3. `HybridRetriever` 并行计算稠密、稀疏、HyDE 和 MCP 路线，使用 RRF 去重，再由 BGE-Reranker 精排，按累计概率动态截取 Top-p。
+3. `HybridRetriever` 将检索拆成可观察的独立动作：原问题 `dense_retrieve`、原问题 `sparse_retrieve`、当前问答模型 `hyde_generate`、假设答案 `hyde_retrieve`、`rrf_fusion`、`rerank` 和 `conflict_check`。三路召回结果经 RRF 去重，再由 BGE-Reranker 精排并按累计概率动态截取 Top-p。离线模式使用明确标注的本地模板；在线 HyDE 调用失败时只降级 HyDE 生成阶段，并在 Trace 与策略字段中标记 `degraded`/`offline_fallback`。
 4. 每个候选同时携带版本日期、发布时间、适用范围、页码、章节、父子 Chunk ID 和图片路径。可信度用于排序但不能覆盖正文冲突；冲突检测返回事实、不同值和 Chunk ID。
 5. `MilvusVectorStore`、`MongoTraceStore` 在配置连接串时接入真实服务，否则保留相同接口的内存实现。`requirements-ml.txt` 启用 BGE-M3/BGE-Reranker 权重。
 
@@ -59,7 +59,9 @@ multipart 文件 → 类型/大小/PDF 头校验 → 隔离保存
 
 ## Web 操作界面与模型配置
 
-根路径 `/` 返回无需构建工具的单页界面，支持模型配置、文件上传、文档勾选、多轮问答和引用展示。`RuntimeModelConfig` 提供线程安全的运行时配置：离线模式使用 `OfflineDecisionModel`，OpenAI-compatible 模式使用用户填写的 Base URL、模型名和 API Key。读取配置时永不返回密钥原文，密钥只驻留进程内存；服务重启后需重新填写或使用环境变量。
+根路径 `/` 返回无需构建工具的单页界面，支持模型配置、文件上传、文档勾选、多轮问答和引用展示。每张引用卡片直接展示文档 ID、页码、章节、Chunk ID 与后端返回的原文片段，便于逐句核验回答。`RuntimeModelConfig` 提供线程安全的运行时配置：离线模式使用 `OfflineDecisionModel`，OpenAI-compatible 模式使用用户填写的 Base URL、模型名和 API Key。读取配置时永不返回密钥原文，密钥只驻留进程内存；服务重启后需重新填写或使用环境变量。
+
+问答界面通过 `POST /ask/stream` 接收 NDJSON 进度流。进度事件由商品解析、原问题 Dense/Sparse 检索、HyDE 生成与检索、RRF、重排、冲突检查、原文读取和最终生成阶段实时产生，前端只显示当前阶段；它不展示模型内部思维过程，也不会用定时器模拟进度。每个检索阶段同时写入 Trace，包含工具、参数、结果摘要、状态、耗时和下一阶段。原有 `POST /ask` 保留给普通 HTTP API 调用。
 
 在线模型负责检索动作与证据回答，Prompt 要求只能使用已读取的 `readings`，并引用文档 ID、页码、章节和 Chunk ID。离线模式继续使用可复现的证据生成器。
 

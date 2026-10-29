@@ -69,6 +69,8 @@ class TraceEvent:
     next_action: str | None
     decision_basis: str
     decision_source: str
+    status: str = "completed"
+    duration_ms: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

@@ -17,12 +17,23 @@
     "actual_output": {
       "answer": "根据 UPL-2ED6D80B91E4FB72-P001-C01 第 1 页《产品保修政策》（Chunk UPL-2ED6D80B91E4FB72-P001-C01，版本 2026-10-28），# 产品保修政策\n本设备保修期为24个月，自激活之日起计算。",
       "status": "completed",
-      "citation": {
-        "source_doc_id": "UPL-2ED6D80B91E4FB72",
-        "page_start": 1,
-        "chapter": "产品保修政策",
-        "chunk_id": "UPL-2ED6D80B91E4FB72-P001-C01"
-      }
+      "citations": [
+        {
+          "doc_id": "UPL-2ED6D80B91E4FB72-P001-C01",
+          "source_doc_id": "UPL-2ED6D80B91E4FB72",
+          "title": "保修政策.md",
+          "version_date": "2026-10-28",
+          "applicability": "用户上传文档",
+          "content": "# 产品保修政策\n本设备保修期为24个月，自激活之日起计算。",
+          "page_start": 1,
+          "page_end": 1,
+          "chapter": "产品保修政策",
+          "chunk_id": "UPL-2ED6D80B91E4FB72-P001-C01",
+          "parent_chunk_id": "UPL-2ED6D80B91E4FB72-P001",
+          "image_refs": [],
+          "source_type": "markdown"
+        }
+      ]
     }
   },
   "scope_verification": "测试同时上传一份保修期为6个月的文档；限定上述 document_id 后，回答未包含6个月内容。"
