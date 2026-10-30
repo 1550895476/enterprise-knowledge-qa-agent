@@ -1,0 +1,62 @@
+{
+  "recorded_at": "2026-10-30T17:16:09+08:00",
+  "model_config": {
+    "provider": "openai",
+    "model": "gpt-5.6-sol",
+    "base_url": "https://code0.ai/v1",
+    "protocol": "chat_completions",
+    "reasoning_effort": "none",
+    "response_format": "json_object",
+    "persistence": "memory_only"
+  },
+  "retrieval_config": {
+    "dense_backend": "bge-m3",
+    "sparse_backend": "okapi-bm25",
+    "evidence_policy": "read_original_before_answer"
+  },
+  "input": {
+    "question": "北京地铁 1 号线今天几点停运",
+    "history": []
+  },
+  "expected_status": "insufficient_evidence",
+  "actual_output": {
+    "question": "北京地铁 1 号线今天几点停运",
+    "answer": "抱歉，知识库中没有找到关于北京地铁 1 号线停运时间或末班车时刻的资料，我无法提供准确的停运信息。建议您通过北京地铁官方网站、官方 App 或拨打服务热线查询最新运营时间。",
+    "citations": [],
+    "gaps": [
+      "知识库缺少北京地铁 1 号线运营时间/末班车时刻相关文档",
+      "缺少当日运营调整等时效性信息"
+    ],
+    "status": "insufficient_evidence"
+  },
+  "trace": [
+    {
+      "step": 1,
+      "kind": "tool_call",
+      "action": "search",
+      "tool": "search_documents",
+      "parameters": {
+        "query": "北京地铁1号线今天停运时间及末班车时刻"
+      },
+      "result_summary": "Embedding+BM25 混合检索命中 0 份文档",
+      "next_action": "finish",
+      "decision_basis": "已执行完整 search 且 hits 为空，企业知识库资料不足，依据规则友好拒答并填写 gaps",
+      "decision_source": "openai_compatible_model",
+      "status": "completed",
+      "duration_ms": null
+    },
+    {
+      "step": 2,
+      "kind": "decision",
+      "action": "finish",
+      "tool": null,
+      "parameters": {},
+      "result_summary": "未调用工具",
+      "next_action": null,
+      "decision_basis": "已执行完整 search 且 hits 为空，企业知识库资料不足，依据规则友好拒答并填写 gaps",
+      "decision_source": "openai_compatible_model",
+      "status": "completed",
+      "duration_ms": null
+    }
+  ]
+}

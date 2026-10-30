@@ -6,6 +6,11 @@ services:
       MONGODB_URI: mongodb://mongodb:27017
       ENABLE_BGE: "0"
       MAX_UPLOAD_BYTES: "20971520"
+      MODEL_PROVIDER: ${MODEL_PROVIDER:-openai}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      MODEL_PROTOCOL: ${MODEL_PROTOCOL:-chat_completions}
     ports:
       - "8000:8000"
     volumes:

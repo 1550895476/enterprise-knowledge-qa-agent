@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Callable, TypedDict
 
 from .agent import KnowledgeQAAgent
-from .decision import DecisionModel, OfflineDecisionModel
+from .decision import DecisionModel
 from .generation import GroundedAnswerGenerator
 from .models import AgentResult, ToolObservation, TraceEvent
 from .query_understanding import ProductMatcher, ProductResolution
@@ -18,11 +18,11 @@ class AdvancedTools:
     def __init__(
         self,
         retriever: HybridRetriever,
-        query_expander: DecisionModel | None = None,
+        query_expander: DecisionModel,
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ):
         self.retriever = retriever
-        self.query_expander = query_expander or OfflineDecisionModel()
+        self.query_expander = query_expander
         self.progress_callback = progress_callback
         self.product_id: str | None = None
         self.document_ids: list[str] | None = None
@@ -91,7 +91,9 @@ class AdvancedTools:
         return ToolObservation(
             "hybrid_search",
             True,
-            f"混合检索命中 {len(hits)} 个 Chunk，路线={routes}，HyDE 模型={expansion_backend}，RRF 后重排",
+            f"混合检索命中 {len(hits)} 个 Chunk，路线={routes}，"
+            f"Dense={result.strategy['dense_backend']}，Sparse={result.strategy['sparse_backend']}，"
+            f"HyDE 模型={expansion_backend}，RRF 后重排",
             {
                 "hits": hits,
                 "retrieval": {
@@ -131,7 +133,6 @@ class EnterpriseKnowledgeAgent:
         root = Path(__file__).resolve().parent.parent
         self.matcher = ProductMatcher(products_path or root / "data" / "products.json")
         self.retriever = HybridRetriever(chunks_path or root / "data" / "chunks.json")
-        self.tools = AdvancedTools(self.retriever)
         self.trace_store = MongoTraceStore()
         self.generator = GroundedAnswerGenerator()
         self.max_steps = max_steps
@@ -213,7 +214,9 @@ class EnterpriseKnowledgeAgent:
             return state
         # Scope is request-local. This prevents concurrent LangGraph runs from
         # leaking a product or uploaded-document filter into another request.
-        configured_model = state.get("decision_model") or OfflineDecisionModel()
+        configured_model = state.get("decision_model")
+        if configured_model is None:
+            raise ValueError("尚未配置在线问答模型，请先在模型配置中测试并启用模型")
         scoped_tools = AdvancedTools(
             self.retriever,
             query_expander=configured_model,
@@ -233,7 +236,7 @@ class EnterpriseKnowledgeAgent:
         # rewritten query remains visible in the graph resolution metadata and
         # search Trace.
         result.question = state["question"]
-        model_source = getattr(configured_model, "source", "offline_model")
+        model_source = getattr(configured_model, "source", "online_model")
         if result.status == "completed" and result.citations and (model_source != "openai_compatible_model" or not result.answer.strip()):
             result.answer = self.generator.generate(resolution["rewritten_query"], result.citations)
         state["result"] = result.to_dict()

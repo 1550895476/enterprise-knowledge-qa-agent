@@ -9,7 +9,7 @@ GROUNDED_SYSTEM_PROMPT = """你是企业知识库问答生成器。只能使用�
 
 
 class GroundedAnswerGenerator:
-    """Evidence-window builder used by both offline and live generation paths."""
+    """Evidence-window builder for grounded answer generation."""
 
     def build_prompt(self, question: str, evidence: list[dict[str, Any]], conflicts: list[dict[str, Any]] | None = None) -> str:
         context = [

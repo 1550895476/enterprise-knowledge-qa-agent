@@ -36,13 +36,13 @@
       }
     ],
     "status": "completed",
-    "retrieval_strategy": {"routes": ["dense", "sparse", "hyde"], "query_expansion": "offline_model", "fusion": "RRF(k=60)", "reranker": "BGE-Reranker/fallback", "top_p": 0.85}
+    "retrieval_strategy": {"routes": ["dense", "sparse", "hyde"], "query_expansion": "deterministic_test_double", "fusion": "RRF(k=60)", "reranker": "BGE-Reranker/fallback", "top_p": 0.85}
   },
   "trace": [
     {"step": 0, "node": "resolve_product", "result": "P100-X1", "decision": "标准商品库确认型号后允许检索"},
     {"step": 1, "action": "dense_retrieve", "tool": "dense_vector_search", "parameters": {"query": "Pro X1 怎么开机"}, "result_summary": "使用原始问题完成 Dense 稠密检索", "next_action": "sparse_retrieve"},
     {"step": 1, "action": "sparse_retrieve", "tool": "sparse_vector_search", "parameters": {"query": "Pro X1 怎么开机"}, "result_summary": "使用原始问题完成 Sparse 关键词检索", "next_action": "hyde_generate"},
-    {"step": 1, "action": "hyde_generate", "tool": "active_model", "parameters": {"model_source": "offline_model"}, "result_summary": "使用当前问答模型生成 HyDE 假设答案", "next_action": "hyde_retrieve"},
+    {"step": 1, "action": "hyde_generate", "tool": "test_decision_double", "parameters": {"model_source": "deterministic_test_double"}, "result_summary": "测试桩生成 HyDE 假设答案", "next_action": "hyde_retrieve"},
     {"step": 1, "action": "hyde_retrieve", "tool": "dense_vector_search", "result_summary": "使用 HyDE 假设答案完成 Dense 稠密检索", "next_action": "rrf_fusion"},
     {"step": 1, "action": "rrf_fusion", "tool": "rrf_fusion", "parameters": {"routes": ["dense", "sparse", "hyde"], "k": 60}, "result_summary": "三路召回结果完成 RRF 去重融合", "next_action": "rerank"},
     {"step": 1, "action": "rerank", "tool": "bge_reranker", "result_summary": "统一精排并按 Top-p 截取", "next_action": "conflict_check"},

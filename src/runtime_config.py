@@ -10,7 +10,13 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 
-from .decision import DecisionModel, OfflineDecisionModel, OpenAICompatibleDecisionModel
+from dotenv import load_dotenv
+
+from .decision import DecisionModel, OpenAICompatibleDecisionModel
+from .http_utils import urlopen_with_retry
+
+
+load_dotenv()
 
 
 class ModelConfigError(ValueError):
@@ -33,8 +39,11 @@ class RuntimeModelConfig:
 
     def __init__(self):
         self._lock = threading.RLock()
+        provider = os.getenv("MODEL_PROVIDER", "openai").strip().lower()
+        if provider not in {"openai", "deepseek", "custom"}:
+            provider = "openai"
         self._config = ModelConfig(
-            provider=os.getenv("MODEL_PROVIDER", "offline"),
+            provider=provider,
             model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
             base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/"),
             api_key=os.getenv("OPENAI_API_KEY", ""),
@@ -69,18 +78,17 @@ class RuntimeModelConfig:
         provider = provider.strip().lower()
         model = model.strip()
         base_url = self._normalize_base_url(base_url)
-        if provider not in {"offline", "openai", "deepseek", "custom"}:
-            raise ModelConfigError("provider 仅支持 offline、openai、deepseek 或 custom")
+        if provider not in {"openai", "deepseek", "custom"}:
+            raise ModelConfigError("provider 仅支持 openai、deepseek 或 custom")
         self._validate_options(protocol, reasoning_effort, response_format)
-        if provider != "offline":
-            if not model:
-                raise ModelConfigError("必须填写模型名称")
-            parsed = urlparse(base_url)
-            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-                raise ModelConfigError("Base URL 必须是有效的 HTTP(S) 地址")
+        if not model:
+            raise ModelConfigError("必须填写模型名称")
+        parsed = urlparse(base_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ModelConfigError("Base URL 必须是有效的 HTTP(S) 地址")
         with self._lock:
             next_key = self._config.api_key if api_key is None or not api_key.strip() else api_key.strip()
-            if provider != "offline" and not next_key:
+            if not next_key:
                 raise ModelConfigError("在线模型模式必须配置 API Key")
             self._config = ModelConfig(
                 provider,
@@ -105,8 +113,6 @@ class RuntimeModelConfig:
         response_format: str = "json_object",
     ) -> dict[str, Any]:
         provider = provider.strip().lower()
-        if provider == "offline":
-            return {"ok": True, "provider": "offline", "model": "offline", "latency_ms": 0, "message": "离线决策模型可用，无需网络连接"}
         with self._lock:
             fallback_key = self._config.api_key
         key = api_key.strip() if api_key and api_key.strip() else fallback_key
@@ -128,12 +134,17 @@ class RuntimeModelConfig:
         request = urllib.request.Request(
             f"{base_url}/{endpoint}",
             data=json.dumps(payload).encode("utf-8"),
-            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json", "Accept": "application/json"},
+            headers={
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "User-Agent": "Enterprise-Knowledge-QA-Agent/1.0",
+            },
             method="POST",
         )
         started = time.perf_counter()
         try:
-            with urllib.request.urlopen(request, timeout=max(3, min(timeout_seconds, 60))) as response:
+            with urlopen_with_retry(request, timeout=max(3, min(timeout_seconds, 60)), attempts=3) as response:
                 raw = response.read().decode("utf-8").strip()
                 latency_ms = round((time.perf_counter() - started) * 1000)
                 if not raw:
@@ -196,8 +207,6 @@ class RuntimeModelConfig:
         timeout_seconds: int = 20,
     ) -> dict[str, Any]:
         provider = provider.strip().lower()
-        if provider == "offline":
-            return {"ok": True, "provider": "offline", "models": ["offline"], "count": 1, "latency_ms": 0}
         if provider not in {"openai", "deepseek", "custom"}:
             raise ModelConfigError("仅支持 OpenAI、DeepSeek 或自定义中转站模型发现")
         base_url = self._normalize_base_url(base_url)
@@ -212,12 +221,16 @@ class RuntimeModelConfig:
 
         request = urllib.request.Request(
             f"{base_url}/models",
-            headers={"Authorization": f"Bearer {key}", "Accept": "application/json"},
+            headers={
+                "Authorization": f"Bearer {key}",
+                "Accept": "application/json",
+                "User-Agent": "Enterprise-Knowledge-QA-Agent/1.0",
+            },
             method="GET",
         )
         started = time.perf_counter()
         try:
-            with urllib.request.urlopen(request, timeout=max(3, min(timeout_seconds, 60))) as response:
+            with urlopen_with_retry(request, timeout=max(3, min(timeout_seconds, 60)), attempts=3) as response:
                 payload = json.loads(response.read().decode("utf-8"))
                 rows = payload.get("data", payload.get("models", [])) if isinstance(payload, dict) else []
                 model_ids = []
@@ -307,14 +320,16 @@ class RuntimeModelConfig:
     def build_model(self) -> DecisionModel:
         with self._lock:
             config = ModelConfig(**self._config.__dict__)
-        if config.provider in {"openai", "deepseek", "custom"}:
-            return OpenAICompatibleDecisionModel(
-                config.api_key,
-                config.base_url,
-                config.model,
-                protocol=config.protocol,
-                reasoning_effort=config.reasoning_effort,
-                response_format=config.response_format,
-            )
-        return OfflineDecisionModel()
+        if config.provider not in {"openai", "deepseek", "custom"}:
+            raise ModelConfigError("当前模型配置无效，请重新选择在线 Provider")
+        if not config.api_key:
+            raise ModelConfigError("尚未配置在线模型 API Key，请先测试并启用模型")
+        return OpenAICompatibleDecisionModel(
+            config.api_key,
+            config.base_url,
+            config.model,
+            protocol=config.protocol,
+            reasoning_effort=config.reasoning_effort,
+            response_format=config.response_format,
+        )
 

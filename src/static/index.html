@@ -218,7 +218,7 @@
       <div class="service-status"><span id="healthDot" class="dot"></span><span id="healthText">正在连接服务…</span></div>
 
       <section class="side-card">
-        <div class="side-title"><h2>问答模型</h2><span id="modelBadge" class="badge">离线模式</span></div>
+        <div class="side-title"><h2>问答模型</h2><span id="modelBadge" class="badge">未配置</span></div>
         <div class="model-summary">
           <div id="activeModelLabel" class="model-summary-main">正在读取配置…</div>
           <div id="activeModelMeta" class="model-summary-meta">配置只在当前服务运行期间生效</div>
@@ -301,7 +301,6 @@
         <div class="model-field">
           <label for="provider">Provider</label>
           <select id="provider">
-            <option value="offline">本地离线模型</option>
             <option value="deepseek">DeepSeek 官方</option>
             <option value="openai">OpenAI 官方</option>
             <option value="custom">OpenAI-compatible 中转站</option>
@@ -376,9 +375,8 @@
     }
 
     function toggleModelFields() {
-      const remote = el('provider').value !== 'offline';
-      document.querySelectorAll('.remote-only').forEach(node => node.style.display = remote ? 'block' : 'none');
-      el('fetchModels').disabled = !remote;
+      document.querySelectorAll('.remote-only').forEach(node => node.style.display = 'block');
+      el('fetchModels').disabled = false;
       resetModelSelect();
       updateModelStatus();
     }
@@ -417,11 +415,11 @@
       return {
         provider,
         base_url: el('baseUrl').value,
-        model: provider === 'offline' ? 'offline' : el('modelName').value,
+        model: el('modelName').value,
         api_key: el('apiKey').value || null,
-        protocol: provider === 'offline' ? 'chat_completions' : el('protocol').value,
-        reasoning_effort: provider === 'offline' ? 'none' : el('reasoningEffort').value,
-        response_format: provider === 'offline' ? 'json_object' : el('responseFormat').value,
+        protocol: el('protocol').value,
+        reasoning_effort: el('reasoningEffort').value,
+        response_format: el('responseFormat').value,
       };
     }
 
@@ -436,17 +434,18 @@
     }
 
     function providerLabel(provider) {
-      return { offline:'本地离线', deepseek:'DeepSeek', openai:'OpenAI', custom:'中转站' }[provider] || provider;
+      return { deepseek:'DeepSeek', openai:'OpenAI', custom:'中转站' }[provider] || provider;
     }
 
     function protocolLabel(protocol) { return protocol === 'responses' ? 'Responses API' : 'Chat Completions'; }
 
     function renderModelSummary(data) {
       state.activeModel = data;
-      const offline = data.provider === 'offline';
-      el('modelBadge').textContent = offline ? '离线模式' : providerLabel(data.provider);
-      el('activeModelLabel').textContent = offline ? '本地离线决策模型' : data.model;
-      el('activeModelMeta').textContent = offline ? '无需 API Key · 可用于完整流程演示' : `${protocolLabel(data.protocol)} · ${data.base_url}`;
+      el('modelBadge').textContent = data.api_key_configured ? providerLabel(data.provider) : '未配置';
+      el('activeModelLabel').textContent = data.model;
+      el('activeModelMeta').textContent = data.api_key_configured
+        ? `${protocolLabel(data.protocol)} · ${data.base_url}`
+        : '需要先填写 API Key、测试连接并启用模型';
       updateModelStatus();
     }
 
@@ -456,7 +455,7 @@
       if (message) { result.textContent = message; return; }
       if (!state.activeModel) { result.textContent = '正在读取当前模型配置…'; return; }
       const active = state.activeModel;
-      if (active.provider === 'offline') { result.textContent = '当前运行：本地离线决策模型。可直接测试并启用，或选择在线 Provider。'; return; }
+      if (!active.api_key_configured) { result.textContent = '尚未启用在线模型。请填写 API Key，读取或填写模型名，测试成功后启用。'; return; }
       result.textContent = `当前运行：${providerLabel(active.provider)} · ${active.model} · ${protocolLabel(active.protocol)}。请读取可用模型或直接填写模型名后测试。`;
     }
 
@@ -515,7 +514,7 @@
         el('apiKey').value = ''; el('apiKey').placeholder = data.api_key_configured ? '已配置，留空保持不变' : '请输入 API Key';
         renderModelSummary(data);
         closeModelModal();
-        toast(data.provider === 'offline' ? '已切换到离线决策模型' : `已配置模型 ${data.model}`);
+        toast(`已配置模型 ${data.model}`);
       } catch (error) { toast(error.message, true); }
       finally { button.disabled = false; button.textContent = '启用该模型'; }
     }

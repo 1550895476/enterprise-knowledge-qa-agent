@@ -1,0 +1,21 @@
+{
+  "generated_at": "2026-10-30T17:18:54+08:00",
+  "model_config": {
+    "provider": "openai",
+    "model": "gpt-5.6-sol",
+    "base_url": "https://code0.ai/v1",
+    "protocol": "chat_completions",
+    "reasoning_effort": "none",
+    "response_format": "json_object",
+    "persistence": "memory_only"
+  },
+  "files": [
+    "01-normal.json",
+    "02-conflict.json",
+    "03-out-of-scope.json",
+    "04-paraphrase.json",
+    "05-context-follow-up.json",
+    "06-tool-failure.json"
+  ],
+  "failures": []
+}

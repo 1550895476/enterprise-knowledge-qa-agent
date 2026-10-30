@@ -6,7 +6,9 @@ from fastapi.testclient import TestClient
 
 from src.api import app
 from src.decision import OpenAICompatibleDecisionModel
+from src.models import ToolObservation
 from src.runtime_config import ModelConfigError, RuntimeModelConfig
+from tests.fakes import DeterministicTestDecisionModel
 
 
 class WebInterfaceTests(unittest.TestCase):
@@ -29,9 +31,11 @@ class WebInterfaceTests(unittest.TestCase):
         self.assertIn("由当前模型直接回答 · 未使用知识库", response.text)
         self.assertIn("Array.isArray(result.gaps)", response.text)
         self.assertNotIn("状态：${result.status}", response.text)
+        self.assertNotIn('value="offline"', response.text)
 
     def test_streaming_ask_reports_live_progress_before_result(self):
-        response = self.client.post("/ask/stream", json={"question": "Pro X1 怎么开机"})
+        with patch("src.api.model_config.build_model", return_value=DeterministicTestDecisionModel()):
+            response = self.client.post("/ask/stream", json={"question": "Pro X1 怎么开机"})
         self.assertEqual(response.status_code, 200)
         self.assertIn("application/x-ndjson", response.headers["content-type"])
         events = [json.loads(line) for line in response.text.splitlines() if line.strip()]
@@ -54,8 +58,9 @@ class WebInterfaceTests(unittest.TestCase):
 
     def test_model_config_is_redacted_and_validated(self):
         config = RuntimeModelConfig()
-        public = config.update("offline", "gpt-4o-mini", "https://api.openai.com/v1")
-        self.assertEqual(public["provider"], "offline")
+        config._config.api_key = "stored-key"
+        public = config.update("openai", "gpt-4o-mini", "https://api.openai.com/v1")
+        self.assertEqual(public["provider"], "openai")
         self.assertNotIn("api_key", public)
 
         empty_config = RuntimeModelConfig()
@@ -80,10 +85,19 @@ class WebInterfaceTests(unittest.TestCase):
         self.assertEqual(public["response_format"], "json_object")
         self.assertNotIn("api_key", public)
 
-    def test_offline_model_connection_test(self):
-        result = RuntimeModelConfig().test_connection("offline", "", "")
-        self.assertTrue(result["ok"])
-        self.assertEqual(result["latency_ms"], 0)
+    def test_build_model_requires_online_api_key(self):
+        config = RuntimeModelConfig()
+        config._config.api_key = ""
+        with self.assertRaisesRegex(ModelConfigError, "API Key"):
+            config.build_model()
+        with self.assertRaisesRegex(ModelConfigError, "provider"):
+            config.update("offline", "offline", "")
+
+    def test_ask_requires_configured_online_model(self):
+        with patch("src.api.model_config.build_model", side_effect=ModelConfigError("尚未配置在线模型 API Key")):
+            response = self.client.post("/ask", json={"question": "报销期限多久"})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("API Key", response.json()["detail"])
 
     def test_model_connection_rejects_empty_http_200_response(self):
         class EmptyResponse:
@@ -211,6 +225,79 @@ class WebInterfaceTests(unittest.TestCase):
         self.assertEqual(payload["reasoning"], {"effort": "medium"})
         self.assertIn("简单计算", payload["input"][0]["content"])
         self.assertIn("不得依赖模型记忆直接回答", payload["input"][0]["content"])
+        self.assertIn("不能只输出单词 JSON", payload["input"][0]["content"])
+        self.assertIn("禁止直接 ask", payload["input"][0]["content"])
+        self.assertIn("hits 为空", payload["input"][0]["content"])
+
+    def test_reasoning_wrapped_json_drives_agent_action_selection(self):
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                content = '<think>check evidence first</think>\n```json\n{"action":"search","query":"密码重置","reason":"需要企业资料"}\n```'
+                return json.dumps({"choices": [{"message": {"content": content}}]}).encode("utf-8")
+
+        model = OpenAICompatibleDecisionModel(
+            api_key="test-key",
+            base_url="https://relay.example.com/v1",
+            model="reasoning-model",
+        )
+        with patch("urllib.request.urlopen", return_value=FakeResponse()):
+            action = model.choose({"question": "密码忘了怎么办", "history": []}, None)
+
+        self.assertEqual(action.name, "search")
+        self.assertEqual(action.query, "密码重置")
+
+    def test_model_must_read_original_after_search_hits(self):
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return b'{"choices":[{"message":{"content":"{\\"action\\":\\"finish\\",\\"answer\\":\\"30 days\\"}"}}]}'
+
+        model = OpenAICompatibleDecisionModel(api_key="test-key", base_url="https://relay.example.com/v1")
+        state = {
+            "question": "报销期限多久",
+            "hits": [{"doc_id": "D01", "snippet": "报销期限 30 天"}],
+            "readings": [],
+        }
+        observation = ToolObservation("search_documents", True, "命中 1 份文档", {"hits": state["hits"]})
+        with patch("urllib.request.urlopen", return_value=FakeResponse()):
+            action = model.choose(state, observation)
+
+        self.assertEqual(action.name, "read")
+        self.assertEqual(action.doc_id, "D01")
+        self.assertIn("读取", action.reason)
+
+    def test_empty_search_result_becomes_insufficient_evidence(self):
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                content = '{"action":"ask","answer":"请补充信息","gaps":[]}'
+                return json.dumps({"choices": [{"message": {"content": content}}]}).encode("utf-8")
+
+        model = OpenAICompatibleDecisionModel(api_key="test-key", base_url="https://relay.example.com/v1")
+        state = {"question": "火星办公室停车费是多少", "hits": [], "readings": []}
+        observation = ToolObservation("hybrid_search", True, "混合检索命中 0 个 Chunk", {"hits": []})
+        with patch("urllib.request.urlopen", return_value=FakeResponse()):
+            action = model.choose(state, observation)
+
+        self.assertEqual(action.name, "finish")
+        self.assertTrue(action.gaps)
+        self.assertIn("未能在当前知识库中找到", action.answer)
 
     def test_hyde_expansion_uses_current_online_model(self):
         class FakeResponse:

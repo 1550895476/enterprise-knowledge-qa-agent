@@ -8,18 +8,21 @@ from src.advanced_agent import AdvancedTools, EnterpriseKnowledgeAgent
 from src.document_service import DocumentUploadError, DocumentUploadService
 from src.ingestion import ParsedPage, StructureAwareChunker
 from src.retrieval import HybridRetriever
+from src.search_backends import BM25Index
 from src.tools import KnowledgeBase
+from tests.fakes import DeterministicTestDecisionModel
 
 
 class AgentAcceptanceTests(unittest.TestCase):
     def setUp(self):
-        self.agent = KnowledgeQAAgent.from_default_data()
+        self.agent = KnowledgeQAAgent.from_default_data(model=DeterministicTestDecisionModel())
 
     def test_normal_answer_has_supported_citation(self):
         result = self.agent.run("密码忘了怎么办")
         self.assertEqual(result.status, "completed")
         self.assertIn("绑定手机", result.answer)
         self.assertEqual(result.citations[0]["doc_id"], "D04")
+        self.assertTrue(all(item["doc_id"] in result.answer for item in result.citations))
         self.assertTrue(any(event.next_action == "read" for event in result.trace))
 
     def test_conflict_does_not_choose_one_value(self):
@@ -33,6 +36,7 @@ class AgentAcceptanceTests(unittest.TestCase):
         self.assertIn("D02", result.answer)
         self.assertIn("15天", result.answer)
         self.assertTrue(all(item["content"] for item in result.citations))
+        self.assertTrue(all(item["doc_id"] in result.answer for item in result.citations))
         self.assertNotIn("是15天", result.answer)
 
     def test_out_of_scope_reports_gap(self):
@@ -84,34 +88,46 @@ class AgentAcceptanceTests(unittest.TestCase):
         self.assertEqual(result.citations[0]["doc_id"], "D05")
 
     def test_tool_failure_is_visible_and_recovered(self):
-        agent = KnowledgeQAAgent.from_default_data(fail_search_once=True)
+        agent = KnowledgeQAAgent.from_default_data(model=DeterministicTestDecisionModel(), fail_search_once=True)
         result = agent.run("密码忘了怎么办")
         self.assertEqual(result.status, "completed")
         self.assertTrue(any("暂时不可用" in event.result_summary for event in result.trace))
+        self.assertTrue(any(event.status == "failed" for event in result.trace))
 
     def test_read_failure_is_visible_and_recovered(self):
-        agent = KnowledgeQAAgent.from_default_data(fail_read_once=True)
+        agent = KnowledgeQAAgent.from_default_data(model=DeterministicTestDecisionModel(), fail_read_once=True)
         result = agent.run("密码忘了怎么办")
         self.assertEqual(result.status, "completed")
         self.assertTrue(any("读取服务暂时不可用" in event.result_summary for event in result.trace))
 
     def test_step_limit_returns_incomplete(self):
-        result = KnowledgeQAAgent.from_default_data(max_steps=1).run("密码忘了怎么办")
+        result = KnowledgeQAAgent.from_default_data(model=DeterministicTestDecisionModel(), max_steps=1).run("密码忘了怎么办")
         self.assertEqual(result.status, "incomplete")
         self.assertIn("上限", result.gaps[0])
 
     def test_empty_clarification_answer_gets_friendly_fallback(self):
-        class EmptyClarificationModel:
+        class EmptyConflictClarificationModel:
             source = "empty_clarification_test"
 
             def choose(self, state, observation):
                 from src.models import Action
 
-                return Action("ask", answer="", gaps=["需要确认具体型号"], reason="信息不足")
+                if observation is None:
+                    return Action("search", query="报销期限", reason="先检索制度")
+                hits = state.get("hits", [])
+                readings = state.get("readings", [])
+                unread = [hit["doc_id"] for hit in hits if hit["doc_id"] not in {item["doc_id"] for item in readings}]
+                if unread and len(readings) < 2:
+                    return Action("read", doc_id=unread[0], reason="读取冲突候选")
+                return Action("ask", answer="", gaps=["需要确认适用制度"], reason="原文冲突")
 
-        result = KnowledgeQAAgent.from_default_data(model=EmptyClarificationModel()).run("它怎么开机？")
+        result = KnowledgeQAAgent.from_default_data(model=EmptyConflictClarificationModel()).run("报销期限多久？")
         self.assertEqual(result.status, "needs_confirmation")
-        self.assertIn("补充产品型号", result.answer)
+        self.assertIn("D01", result.answer)
+        self.assertIn("30天", result.answer)
+        self.assertIn("D02", result.answer)
+        self.assertIn("15天", result.answer)
+        self.assertIn("确认适用", result.answer)
         self.assertNotIn("Agent 没有返回", result.answer)
 
     def test_progress_reports_actual_agent_stages(self):
@@ -128,6 +144,29 @@ class AgentAcceptanceTests(unittest.TestCase):
 
 
 class ToolTests(unittest.TestCase):
+    def test_okapi_bm25_ranks_specific_repeated_terms(self):
+        index = BM25Index([
+            "密码重置 登录密码 密码重置",
+            "密码修改安全要求",
+            "国内出差餐补标准",
+        ])
+
+        scores = index.scores("忘记密码后如何重置")
+
+        self.assertGreater(scores[0], scores[1])
+        self.assertGreater(scores[1], scores[2])
+
+    def test_basic_knowledge_search_uses_embedding_and_bm25(self):
+        path = Path(__file__).parents[1] / "data" / "documents.json"
+        observation = KnowledgeBase(path).search("费用报账最晚什么时候提交")
+
+        self.assertTrue(observation.data["hits"])
+        self.assertEqual(observation.data["strategy"]["sparse_backend"], "okapi-bm25")
+        self.assertIn("embedding", observation.data["strategy"]["fusion"])
+        metadata = observation.data["hits"][0]["metadata"]
+        self.assertGreater(metadata["dense_score"], 0)
+        self.assertGreater(metadata["bm25_score"], 0)
+
     def test_document_data_is_synthetic_and_loadable(self):
         path = Path(__file__).parents[1] / "data" / "documents.json"
         docs = json.loads(path.read_text(encoding="utf-8"))
@@ -157,16 +196,44 @@ class ToolTests(unittest.TestCase):
 
     def test_hybrid_retrieval_returns_routes_and_metadata(self):
         root = Path(__file__).parents[1]
-        result = HybridRetriever(root / "data" / "chunks.json").retrieve("Pro X1 怎么开机", product_id="P100-X1")
+        model = DeterministicTestDecisionModel()
+        retriever = HybridRetriever(root / "data" / "chunks.json")
+        result = retriever.retrieve(
+            "Pro X1 怎么开机",
+            product_id="P100-X1",
+            query_expansion_backend=model.source,
+            hyde_generator=model.expand_query,
+        )
         self.assertTrue(result.candidates)
         self.assertIn("RRF(k=60)", result.strategy["fusion"])
+        self.assertEqual(result.strategy["sparse_backend"], "okapi-bm25")
         self.assertEqual(result.strategy["routes"], ["dense", "sparse", "hyde"])
         self.assertEqual(
             [event["action"] for event in result.pipeline_trace],
             ["dense_retrieve", "sparse_retrieve", "hyde_generate", "hyde_retrieve", "rrf_fusion", "rerank", "conflict_check"],
         )
+        sparse_event = next(event for event in result.pipeline_trace if event["action"] == "sparse_retrieve")
+        self.assertEqual(sparse_event["tool"], "bm25_search")
         self.assertTrue(result.candidates[0]["retrieval_routes"])
         self.assertIn("page_start", result.candidates[0])
+        self.assertTrue(retriever.store.rows()[0]["dense_vector"])
+        self.assertEqual(
+            retriever.store.rows()[0]["metadata"]["embedding_backend"],
+            result.strategy["dense_backend"],
+        )
+
+    def test_unrelated_short_query_is_rejected_by_rerank_floor(self):
+        root = Path(__file__).parents[1]
+        model = DeterministicTestDecisionModel()
+        result = HybridRetriever(root / "data" / "chunks.json").retrieve(
+            "你好",
+            query_expansion_backend=model.source,
+            hyde_generator=model.expand_query,
+        )
+        self.assertEqual(result.candidates, [])
+        self.assertEqual(result.confidence, 0.0)
+        rerank = next(event for event in result.pipeline_trace if event["action"] == "rerank")
+        self.assertIn("相关性门槛", rerank["result_summary"])
 
     def test_hyde_uses_current_decision_model_without_mcp_route(self):
         class CurrentModel:
@@ -213,13 +280,14 @@ class ToolTests(unittest.TestCase):
         fallback_tools = AdvancedTools(HybridRetriever(root / "data" / "chunks.json"), query_expander=FailingModel())
         fallback_tools.set_scope(product_id="P100-X1")
         fallback = fallback_tools.search("Pro X1 怎么开机")
-        self.assertEqual(fallback.data["retrieval"]["strategy"]["query_expansion"], "failing_current_model:offline_fallback")
+        self.assertEqual(fallback.data["retrieval"]["strategy"]["query_expansion"], "failing_current_model")
         hyde_event = next(event for event in fallback.data["pipeline_trace"] if event["action"] == "hyde_generate")
-        self.assertEqual(hyde_event["status"], "degraded")
+        self.assertEqual(hyde_event["status"], "failed")
         self.assertIn("失败", hyde_event["result_summary"])
+        self.assertEqual(fallback.data["retrieval"]["strategy"]["routes"], ["dense", "sparse"])
 
     def test_advanced_trace_keeps_dense_and_hyde_as_separate_actions(self):
-        result = EnterpriseKnowledgeAgent().run("Pro X1 怎么开机")
+        result = EnterpriseKnowledgeAgent().run("Pro X1 怎么开机", decision_model=DeterministicTestDecisionModel())
         actions = [event.action for event in result.trace]
         self.assertIn("dense_retrieve", actions)
         self.assertIn("hyde_generate", actions)
@@ -230,18 +298,19 @@ class ToolTests(unittest.TestCase):
 
     def test_advanced_pipeline_resolves_product_before_retrieval(self):
         agent = EnterpriseKnowledgeAgent()
-        resolved = agent.run("Pro X1 怎么开机")
+        model = DeterministicTestDecisionModel()
+        resolved = agent.run("Pro X1 怎么开机", decision_model=model)
         self.assertEqual(resolved.status, "completed")
         self.assertIn("3秒", resolved.answer)
         self.assertEqual(resolved.citations[0]["page_start"], 3)
         self.assertTrue(resolved.citations[0]["chunk_id"].startswith("M-P100-X1"))
 
-        ambiguous = agent.run("Pro 怎么开机")
+        ambiguous = agent.run("Pro 怎么开机", decision_model=model)
         self.assertEqual(ambiguous.status, "needs_confirmation")
         self.assertFalse(any(event.tool for event in ambiguous.trace))
         self.assertIn("Pro X1", ambiguous.answer)
 
-        unresolved = agent.run("型号 Z9 怎么开机")
+        unresolved = agent.run("型号 Z9 怎么开机", decision_model=model)
         self.assertEqual(unresolved.status, "needs_confirmation")
         self.assertEqual(unresolved.citations, [])
         self.assertFalse(any(event.tool for event in unresolved.trace))
@@ -263,19 +332,20 @@ class ToolTests(unittest.TestCase):
             self.assertEqual(first.status, "ready")
             self.assertGreater(first.chunk_count, 0)
 
-            result = agent.run("保修期是多久？", document_ids=[first.document_id])
+            model = DeterministicTestDecisionModel()
+            result = agent.run("保修期是多久？", document_ids=[first.document_id], decision_model=model)
             self.assertEqual(result.status, "completed")
             self.assertIn("24个月", result.answer)
             self.assertNotIn("6个月", result.answer)
             self.assertEqual(result.citations[0]["source_doc_id"], first.document_id)
 
-            other = agent.run("保修期是多久？", document_ids=[second.document_id])
+            other = agent.run("保修期是多久？", document_ids=[second.document_id], decision_model=model)
             self.assertIn("6个月", other.answer)
 
             restored_agent = EnterpriseKnowledgeAgent()
             restored_service = DocumentUploadService(restored_agent.retriever, runtime_root=runtime)
             restored_service.require_ready([first.document_id])
-            restored = restored_agent.run("保修期是多久？", document_ids=[first.document_id])
+            restored = restored_agent.run("保修期是多久？", document_ids=[first.document_id], decision_model=model)
             self.assertIn("24个月", restored.answer)
 
     def test_upload_rejects_unsupported_and_oversized_files(self):

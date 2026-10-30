@@ -40,7 +40,7 @@ class ProductMatcher:
 
                 self._embedder = BGEM3FlagModel("BAAI/bge-m3", use_fp16=False)
         except Exception:
-            # The offline matcher is intentionally usable without model weights.
+            # The lexical matcher remains usable without local model weights.
             self._embedder = None
 
     def resolve(self, question: str, history: list[dict[str, str]] | None = None, selected_product_id: str | None = None) -> ProductResolution:

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
-from .decision import DecisionModel, OfflineDecisionModel, answer_stable_question
+from .decision import DecisionModel, answer_stable_question
 from .models import Action, AgentResult, TraceEvent, ToolObservation
 from .tools import FaultInjectingTools, KnowledgeBase
 
@@ -12,13 +12,13 @@ DEFAULT_DATA = Path(__file__).resolve().parent.parent / "data" / "documents.json
 
 
 class KnowledgeQAAgent:
-    def __init__(self, tools: FaultInjectingTools, model: DecisionModel | None = None, max_steps: int = 6):
+    def __init__(self, tools: FaultInjectingTools, model: DecisionModel, max_steps: int = 6):
         self.tools = tools
-        self.model = model or OfflineDecisionModel()
+        self.model = model
         self.max_steps = max_steps
 
     @classmethod
-    def from_default_data(cls, model: DecisionModel | None = None, max_steps: int = 6, **faults: bool):
+    def from_default_data(cls, model: DecisionModel, max_steps: int = 6, **faults: bool):
         return cls(FaultInjectingTools(KnowledgeBase(DEFAULT_DATA), **faults), model=model, max_steps=max_steps)
 
     def run(
@@ -60,8 +60,7 @@ class KnowledgeQAAgent:
                 answer = action.answer.strip() if action.answer else ""
                 if not answer and action.name == "ask":
                     answer = (
-                        "我找到了相关资料，但其中的内容或适用范围存在差异，暂时不能直接给出唯一答案。"
-                        "请补充具体的产品型号、适用部门、制度版本或使用场景，我会继续核对。"
+                        _evidence_clarification_answer(citations)
                         if citations
                         else
                         "目前的信息还不足以确认你要查询的具体范围。请补充产品型号、制度名称、适用部门"
@@ -71,7 +70,8 @@ class KnowledgeQAAgent:
                     answer = "未能在当前知识库中找到足以回答该问题的可靠资料。请补充相关资料或调整问题后重试。"
                 elif not answer:
                     answer = "本次没有生成可用回答，请补充问题背景后重试。"
-                return AgentResult(question, answer, citations, _unique(gaps), status, trace)
+                answer_citations = _citations_referenced_by_answer(answer, citations)
+                return AgentResult(question, answer, answer_citations, _unique(gaps), status, trace)
 
             if action.name == "search":
                 params = {"query": action.query}
@@ -130,6 +130,7 @@ class KnowledgeQAAgent:
                 next_action=next_action.name,
                 decision_basis=next_action.reason,
                 decision_source=self.model.source,
+                status="completed" if observation.ok else "failed",
             ))
             action = next_action
 
@@ -149,6 +150,37 @@ def _normalize_gaps(value: Any) -> list[str]:
     if isinstance(value, (list, tuple, set)):
         return [str(item) for item in value if str(item).strip()]
     return [str(value)] if value else []
+
+
+def _citations_referenced_by_answer(answer: str, citations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Hide read-ahead evidence that the final answer did not actually cite."""
+    referenced = []
+    for citation in citations:
+        identifiers = {
+            str(citation.get("doc_id", "")).strip(),
+            str(citation.get("source_doc_id", "")).strip(),
+            str(citation.get("chunk_id", "")).strip(),
+        }
+        if any(identifier and identifier in answer for identifier in identifiers):
+            referenced.append(citation)
+    # Keep citations for legacy/model responses that cite titles but omit IDs;
+    # the decision prompt and current traces always include explicit identifiers.
+    return referenced or citations
+
+
+def _evidence_clarification_answer(citations: list[dict[str, Any]]) -> str:
+    evidence = []
+    for citation in citations:
+        doc_id = citation.get("source_doc_id") or citation.get("doc_id") or "未知文档"
+        version = citation.get("version_date") or "未知版本"
+        applicability = citation.get("applicability") or "适用范围未注明"
+        content = str(citation.get("content") or "").strip()
+        evidence.append(f"{doc_id}（版本日期 {version}，{applicability}）原文：{content}")
+    return (
+        "我找到的资料存在冲突或适用范围不明确，不能擅自选择一个结论。"
+        + "；".join(evidence)
+        + "。请确认适用的制度、版本、部门或产品型号，我会据此继续核对。"
+    )
 
 
 def _emit_progress(

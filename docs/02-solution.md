@@ -19,14 +19,14 @@
 
 ## 动态决策
 
-离线模型不是预先写死的 Trace，而是一个可替换的决策模型接口。每次 `choose` 都接收完整状态与刚完成的工具观察，再生成结构化 Action。它用于无密钥复现和测试；`OpenAICompatibleDecisionModel` 将相同状态与观察发送给兼容 Chat Completions 的模型。
+`OpenAICompatibleDecisionModel` 每次 `choose` 都将完整状态与刚完成的工具观察发送给当前在线模型，再解析为结构化 Action。生产代码不提供离线决策模型；自动化测试使用 `tests/fakes.py` 中的确定性测试桩验证状态机和异常路径，测试桩不会被应用导入或暴露给用户。
 
 冲突判断只基于已经读取的原文：同一主题出现不同天数/金额时，返回 `needs_confirmation`，引用所有读取文档，并要求补充适用范围或优先级。没有读取到原文时不把检索摘要当作最终证据。
 
 ## 技术取舍
 
-- 选择 Python 标准库：3 小时考核中降低安装和环境风险，保留清晰的模型/工具边界；
-- 不引入向量数据库：合成资料规模小，词项 + 同义词检索足够展示检索改写与证据链；
+- 选择 Python：保留清晰的模型/工具边界，并通过 FastAPI 暴露 HTTP 与 Web 入口；
+- Milvus、MongoDB 和 BGE 均提供真实适配，同时保留检索/存储降级实现，避免本地评审依赖重型服务；
 - 不使用多 Agent：题目重点是单 Agent 的动态决策，多 Agent 会增加噪声而不增加验收覆盖；
 - JSON Trace：便于评审复制运行、替换文档并对比动作变化；
 - `max_steps=6`：防止真实模型或工具异常时无限循环。
@@ -37,7 +37,7 @@
 
 1. `ProductMatcher` 结合历史会话识别商品别名，并与 `data/products.json` 标准商品库匹配；多个相似型号返回选择项，出现型号语义但无法确认时直接追问，不调用检索。
 2. `StructureAwareChunker` 按 PDF 页、标题层级、Layout 坐标和图片引用生成父 Chunk/子 Chunk；过短文本可在切片阶段合并，图片通过 `image_refs` 保留，图片摘要器可注入真实多模态模型。
-3. `HybridRetriever` 将检索拆成可观察的独立动作：原问题 `dense_retrieve`、原问题 `sparse_retrieve`、当前问答模型 `hyde_generate`、假设答案 `hyde_retrieve`、`rrf_fusion`、`rerank` 和 `conflict_check`。三路召回结果经 RRF 去重，再由 BGE-Reranker 精排并按累计概率动态截取 Top-p。离线模式使用明确标注的本地模板；在线 HyDE 调用失败时只降级 HyDE 生成阶段，并在 Trace 与策略字段中标记 `degraded`/`offline_fallback`。
+3. `HybridRetriever` 将检索拆成可观察的独立动作：原问题 embedding `dense_retrieve`、原问题 Okapi BM25 `sparse_retrieve`、当前问答模型 `hyde_generate`、假设答案 embedding `hyde_retrieve`、`rrf_fusion`、`rerank` 和 `conflict_check`。三路召回结果经 RRF 去重，再由 BGE-Reranker 精排并按累计概率动态截取 Top-p。BGE-M3 可通过 `ENABLE_BGE=1` 启用；未安装权重时只对 Dense 路线使用明确标注的 n-gram hashing embedding，Sparse 路线仍执行完整 BM25。HyDE 只使用当前在线模型；生成失败时记录 `failed` 并跳过 HyDE 召回，不再回退到离线模板。
 4. 每个候选同时携带版本日期、发布时间、适用范围、页码、章节、父子 Chunk ID 和图片路径。可信度用于排序但不能覆盖正文冲突；冲突检测返回事实、不同值和 Chunk ID。
 5. `MilvusVectorStore`、`MongoTraceStore` 在配置连接串时接入真实服务，否则保留相同接口的内存实现。`requirements-ml.txt` 启用 BGE-M3/BGE-Reranker 权重。
 
@@ -59,12 +59,12 @@ multipart 文件 → 类型/大小/PDF 头校验 → 隔离保存
 
 ## Web 操作界面与模型配置
 
-根路径 `/` 返回无需构建工具的单页界面，支持模型配置、文件上传、文档勾选、多轮问答和引用展示。每张引用卡片直接展示文档 ID、页码、章节、Chunk ID 与后端返回的原文片段，便于逐句核验回答。`RuntimeModelConfig` 提供线程安全的运行时配置：离线模式使用 `OfflineDecisionModel`，OpenAI-compatible 模式使用用户填写的 Base URL、模型名和 API Key。读取配置时永不返回密钥原文，密钥只驻留进程内存；服务重启后需重新填写或使用环境变量。
+根路径 `/` 返回无需构建工具的单页界面，支持模型配置、文件上传、文档勾选、多轮问答和引用展示。每张引用卡片直接展示文档 ID、页码、章节、Chunk ID 与后端返回的原文片段，便于逐句核验回答。`RuntimeModelConfig` 提供线程安全的在线模型配置，使用用户填写的 Base URL、模型名和 API Key。读取配置时永不返回密钥原文，密钥只驻留进程内存；服务重启后需重新填写或使用环境变量。
 
 问答界面通过 `POST /ask/stream` 接收 NDJSON 进度流。进度事件由商品解析、原问题 Dense/Sparse 检索、HyDE 生成与检索、RRF、重排、冲突检查、原文读取和最终生成阶段实时产生，前端只显示当前阶段；它不展示模型内部思维过程，也不会用定时器模拟进度。每个检索阶段同时写入 Trace，包含工具、参数、结果摘要、状态、耗时和下一阶段。原有 `POST /ask` 保留给普通 HTTP API 调用。
 
-在线模型负责检索动作与证据回答，Prompt 要求只能使用已读取的 `readings`，并引用文档 ID、页码、章节和 Chunk ID。离线模式继续使用可复现的证据生成器。
+在线模型负责检索动作与证据回答，Prompt 要求只能使用已读取的 `readings`，并引用文档 ID、页码、章节和 Chunk ID。未配置在线模型时，问答入口明确拒绝执行。
 
-模型切换面板提供独立连通性测试。测试不会修改当前生效配置，而是根据所选协议向 `<base_url>/responses` 或 `<base_url>/chat/completions` 发送最小请求，返回成功状态、实际模型名、HTTP 状态、延迟和截断后的响应摘要；错误响应经过脱敏，不返回 API Key。只有当前候选配置测试成功后，界面才允许启用。面板包含 OpenAI、DeepSeek、OpenAI-compatible 中转站和离线预设，并允许调整推理强度及 JSON/Text 输出约束。
+模型切换面板提供独立连通性测试。测试不会修改当前生效配置，而是根据所选协议向 `<base_url>/responses` 或 `<base_url>/chat/completions` 发送最小请求，返回成功状态、实际模型名、HTTP 状态、延迟和截断后的响应摘要；错误响应经过脱敏，不返回 API Key。只有当前候选配置测试成功后，界面才允许启用。面板包含 OpenAI、DeepSeek 和 OpenAI-compatible 中转站预设，并允许调整推理强度及 JSON/Text 输出约束。
 
 模型发现模块使用 Bearer Token 请求标准 `GET <base_url>/models`，兼容返回 `data[].id`、`models[].id/name/model` 等常见中转站格式，去重排序后填充模型名称建议列表。用户选择某个模型后再调用连通性测试；不支持模型列表接口的中转站可继续手动输入。Base URL 会自动去除误填的 `/models`、`/responses` 或 `/chat/completions` 末尾路径。

@@ -1,83 +1,77 @@
 from __future__ import annotations
 
 import json
-import hashlib
-import re
+import os
 from pathlib import Path
 from typing import Any
 
 from .models import Document, SearchHit, ToolObservation
-
-
-STOP_WORDS = {
-    "什么", "怎么", "如何", "多少", "多久", "一下", "请问", "帮我", "查询", "规定",
-    "员工", "需要", "可以", "吗", "呢", "的", "是", "那", "我", "想", "知道",
-}
-
-SYNONYMS = {
-    "报销": {"报销", "费用报销", "报账"},
-    "期限": {"期限", "时限", "多久", "多长时间", "几天", "提交时间"},
-    "餐补": {"餐补", "伙食补贴", "吃饭补贴", "餐费补贴"},
-    "密码": {"密码", "口令", "登录密码"},
-    "忘记": {"忘记", "忘了", "找回", "重置"},
-    "研发": {"研发", "技术", "开发"},
-    "开机": {"开机", "启动", "开机启动"},
-    "电源键": {"电源键", "开关键", "电源按钮"},
-    "分辨率": {"分辨率", "清晰度"},
-    "配网": {"配网", "联网", "网络配置"},
-    "保修": {"保修", "保修期", "质保", "质保期"},
-}
-
-
-def normalize_terms(text: str) -> set[str]:
-    cleaned = re.sub(r"[^\w\u4e00-\u9fff]+", " ", text.lower())
-    terms: set[str] = set()
-    for token in cleaned.split():
-        if token not in STOP_WORDS:
-            terms.add(token)
-            for canonical, variants in SYNONYMS.items():
-                if token in variants:
-                    terms.add(canonical)
-                    terms.update(variants)
-    # Chinese questions are often not space separated; preserve useful substrings.
-    for canonical, variants in SYNONYMS.items():
-        if any(variant in cleaned for variant in variants):
-            terms.add(canonical)
-            terms.update(variants)
-    return terms
+from .search_backends import BM25Index, BGEEmbeddingProvider, cosine_similarity, normalize_terms
 
 
 class KnowledgeBase:
     def __init__(self, path: str | Path):
         raw = json.loads(Path(path).read_text(encoding="utf-8"))
         self.documents = [Document(**item) for item in raw]
+        self.embedder = BGEEmbeddingProvider()
+        self._texts = [self._searchable(document) for document in self.documents]
+        self._bm25 = BM25Index(self._texts)
+        self._embeddings = self.embedder.dense_many(self._texts)
 
     def search(self, query: str, limit: int = 5) -> ToolObservation:
         terms = normalize_terms(query)
+        query_embedding = self.embedder.dense(query)
+        dense_scores = [cosine_similarity(query_embedding, vector) for vector in self._embeddings]
+        bm25_scores = self._bm25.scores(query)
+        max_bm25 = max(bm25_scores, default=0.0) or 1.0
+        default_dense_floor = 0.25 if self.embedder.backend.startswith("hashing-") else 0.55
+        try:
+            dense_floor = float(os.getenv("DENSE_MIN_SCORE", str(default_dense_floor)))
+        except ValueError:
+            dense_floor = default_dense_floor
         scored: list[SearchHit] = []
-        for doc in self.documents:
-            searchable = " ".join([doc.title, doc.applicability, doc.content, *doc.tags]).lower()
-            matched = {term for term in terms if term in searchable}
-            if not matched:
+        for doc, dense_score, bm25_score in zip(self.documents, dense_scores, bm25_scores):
+            if bm25_score <= 0 and dense_score < dense_floor:
                 continue
-            score = len(matched) / max(len(terms), 1)
+            normalized_bm25 = bm25_score / max_bm25
+            score = 0.55 * dense_score + 0.45 * normalized_bm25
             snippet = doc.content[:180] + ("…" if len(doc.content) > 180 else "")
             scored.append(SearchHit(
-                doc.doc_id, doc.title, doc.version_date, doc.applicability, snippet, round(score, 3),
+                doc.doc_id, doc.title, doc.version_date, doc.applicability, snippet, round(score, 4),
                 page_start=doc.page_start,
                 page_end=doc.page_end,
                 chapter=doc.chapter,
                 chunk_id=doc.chunk_id or doc.doc_id,
                 parent_chunk_id=doc.parent_chunk_id,
-                metadata={"source_type": doc.source_type, "image_refs": doc.image_refs},
+                metadata={
+                    "source_type": doc.source_type,
+                    "image_refs": doc.image_refs,
+                    "dense_score": round(dense_score, 4),
+                    "bm25_score": round(bm25_score, 4),
+                    "retrieval_routes": ["embedding", "bm25"],
+                    "embedding_backend": self.embedder.backend,
+                },
             ))
         scored.sort(key=lambda hit: (-hit.score, hit.doc_id))
         return ToolObservation(
             tool="search_documents",
             ok=True,
-            summary=f"命中 {len(scored[:limit])} 份文档",
-            data={"hits": [hit.__dict__ for hit in scored[:limit]], "query_terms": sorted(terms)},
+            summary=f"Embedding+BM25 混合检索命中 {len(scored[:limit])} 份文档",
+            data={
+                "hits": [hit.__dict__ for hit in scored[:limit]],
+                "query_terms": sorted(terms),
+                "strategy": {
+                    "dense_backend": self.embedder.backend,
+                    "sparse_backend": "okapi-bm25",
+                    "dense_min_score": dense_floor,
+                    "fusion": "weighted(embedding=0.55,bm25=0.45)",
+                },
+            },
         )
+
+    @staticmethod
+    def _searchable(doc: Document) -> str:
+        return " ".join([doc.title, doc.applicability, doc.chapter, doc.content, *doc.tags])
 
     def read(self, doc_id: str) -> ToolObservation:
         for doc in self.documents:

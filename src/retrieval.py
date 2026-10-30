@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import json
-import hashlib
-import math
+import os
 import re
 import threading
 import time
@@ -11,8 +10,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+from .search_backends import BM25Index, BGEEmbeddingProvider, cosine_similarity, normalize_terms
 from .storage import MilvusVectorStore
-from .tools import normalize_terms
+
+
+_BGE_RERANKER_MODEL = None
+_BGE_RERANKER_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -45,55 +48,35 @@ class RetrievalResult:
     pipeline_trace: list[dict[str, Any]] = field(default_factory=list)
 
 
-class BGEEmbeddingProvider:
-    """BGE-M3 wrapper; a deterministic lexical vector is used without weights."""
-
-    def __init__(self):
-        self.backend = "lexical-fallback"
-        self.model = None
-        try:
-            import os
-            if os.getenv("ENABLE_BGE", "0") == "1":
-                from FlagEmbedding import BGEM3FlagModel  # type: ignore
-
-                self.model = BGEM3FlagModel("BAAI/bge-m3", use_fp16=False)
-                self.backend = "bge-m3"
-        except Exception:
-            self.model = None
-
-    def dense(self, text: str) -> list[float]:
-        if self.model:
-            output = self.model.encode([text], batch_size=1, max_length=512)
-            return list(output["dense_vecs"][0])
-        vector = [0.0] * 32
-        for token in normalize_terms(text):
-            # Python's built-in hash is randomized per process; use a stable
-            # digest so offline ranking and recorded traces are reproducible.
-            index = int(hashlib.md5(token.encode("utf-8")).hexdigest(), 16) % len(vector)
-            vector[index] += 1.0
-        norm = math.sqrt(sum(value * value for value in vector)) or 1.0
-        return [value / norm for value in vector]
-
-
 class BGEReranker:
     """BGE-Reranker wrapper with lexical score fallback."""
 
     def __init__(self):
+        global _BGE_RERANKER_MODEL
         self.backend = "lexical-fallback"
         self.model = None
-        try:
-            import os
-            if os.getenv("ENABLE_BGE", "0") == "1":
+        if os.getenv("ENABLE_BGE", "0") == "1":
+            try:
                 from FlagEmbedding import FlagReranker  # type: ignore
 
-                self.model = FlagReranker("BAAI/bge-reranker-v2-m3", use_fp16=False)
+                with _BGE_RERANKER_LOCK:
+                    if _BGE_RERANKER_MODEL is None:
+                        _BGE_RERANKER_MODEL = FlagReranker("BAAI/bge-reranker-v2-m3", use_fp16=False)
+                self.model = _BGE_RERANKER_MODEL
                 self.backend = "bge-reranker"
-        except Exception:
-            self.model = None
+            except Exception as exc:
+                raise RuntimeError(
+                    "ENABLE_BGE=1，但 BGE-Reranker 加载失败；请检查 requirements-ml.txt、模型缓存和网络"
+                ) from exc
 
     def score(self, query: str, text: str) -> float:
         if self.model:
-            return float(self.model.compute_score([query, text]))
+            value: Any = self.model.compute_score([query, text], normalize=True)
+            while isinstance(value, (list, tuple)):
+                if not value:
+                    return 0.0
+                value = value[0]
+            return float(value)
         query_terms = normalize_terms(query)
         text_terms = normalize_terms(text)
         return len(query_terms & text_terms) / max(len(query_terms), 1)
@@ -107,6 +90,8 @@ class HybridRetriever:
         self.embedder = BGEEmbeddingProvider()
         self.reranker = BGEReranker()
         self._lock = threading.RLock()
+        self._embedding_cache: dict[str, list[float]] = {}
+        self._cache_embeddings(self.chunks)
         self.store.upsert([self._row(chunk) for chunk in self.chunks])
 
     def add_chunks(self, chunks: list[Chunk | dict[str, Any]]) -> int:
@@ -117,6 +102,7 @@ class HybridRetriever:
             added = [chunk for chunk in prepared if chunk.chunk_id not in existing]
             self.chunks.extend(added)
             if added:
+                self._cache_embeddings(added)
                 self.store.upsert([self._row(chunk) for chunk in added])
             return len(added)
 
@@ -128,7 +114,7 @@ class HybridRetriever:
         top_p: float = 0.85,
         limit: int = 8,
         hyde_query: str | None = None,
-        query_expansion_backend: str = "offline_model",
+        query_expansion_backend: str = "active_model",
         hyde_generator: Callable[[str], str] | None = None,
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> RetrievalResult:
@@ -155,16 +141,16 @@ class HybridRetriever:
             started,
         )
 
-        self._emit_progress(progress_callback, "sparse_retrieve", "正在使用原始问题执行 Sparse 关键词检索", {"query": query})
+        self._emit_progress(progress_callback, "sparse_retrieve", "正在使用原始问题执行 BM25 稀疏检索", {"query": query})
         started = time.perf_counter()
         sparse = self._rank(query, scoped, mode="sparse", route="sparse")
         self._record_stage(
             pipeline_trace,
             progress_callback,
             "sparse_retrieve",
-            "sparse_vector_search",
+            "bm25_search",
             {"query": query},
-            f"Sparse 关键词检索完成，命中 {len(sparse)} 个候选",
+            f"BM25 稀疏检索完成，命中 {len(sparse)} 个候选",
             started,
         )
 
@@ -179,17 +165,18 @@ class HybridRetriever:
         expansion_error = ""
         if hyde_query is None:
             try:
-                hyde_query = (hyde_generator(query) if hyde_generator else self._hyde(query)).strip()
+                if hyde_generator is None:
+                    raise ValueError("未提供当前在线模型的 HyDE 生成器")
+                hyde_query = hyde_generator(query).strip()
                 if not hyde_query:
                     raise ValueError("模型返回了空的 HyDE 内容")
             except Exception as exc:
                 expansion_error = f"{type(exc).__name__}: {exc}"
-                hyde_query = self._hyde(query)
-                query_expansion_backend = f"{query_expansion_backend}:offline_fallback"
-                expansion_status = "degraded"
+                hyde_query = ""
+                expansion_status = "failed"
         hyde_summary = (
-            "HyDE 模型生成失败，已使用离线模板继续"
-            if expansion_status == "degraded"
+            "HyDE 模型生成失败，本次跳过 HyDE 召回"
+            if expansion_status == "failed"
             else "HyDE 假设答案生成完成"
         )
         self._record_stage(
@@ -206,7 +193,7 @@ class HybridRetriever:
 
         self._emit_progress(progress_callback, "hyde_retrieve", "正在使用 HyDE 假设答案执行 Dense 稠密检索", {"hyde_query": hyde_query})
         started = time.perf_counter()
-        hyde_dense = self._rank(hyde_query, scoped, mode="dense", route="hyde")
+        hyde_dense = self._rank(hyde_query, scoped, mode="dense", route="hyde") if hyde_query else []
         self._record_stage(
             pipeline_trace,
             progress_callback,
@@ -237,14 +224,20 @@ class HybridRetriever:
             item["trust_score"] = self._trust_score(item)
             item["final_score"] = round(0.6 * item["rerank_score"] + 0.4 * item["trust_score"], 4)
         fused.sort(key=lambda item: (-item["final_score"], item["chunk_id"]))
-        selected = self._top_p(fused[:limit], top_p)
+        default_floor = 0.0 if self.reranker.backend == "lexical-fallback" else 0.1
+        try:
+            rerank_floor = float(os.getenv("RERANK_MIN_SCORE", str(default_floor)))
+        except ValueError:
+            rerank_floor = default_floor
+        qualified = [item for item in fused if item["rerank_score"] > rerank_floor]
+        selected = self._top_p(qualified[:limit], top_p)
         self._record_stage(
             pipeline_trace,
             progress_callback,
             "rerank",
             "bge_reranker",
-            {"query": query, "top_p": top_p, "limit": limit},
-            f"统一重排完成，Top-p 选出 {len(selected)} 个候选",
+            {"query": query, "top_p": top_p, "limit": limit, "min_score": rerank_floor},
+            f"统一重排完成，相关性门槛过滤 {len(fused) - len(qualified)} 个，Top-p 选出 {len(selected)} 个候选",
             started,
         )
 
@@ -265,6 +258,7 @@ class HybridRetriever:
 
         for index, event in enumerate(pipeline_trace):
             event["next_action"] = pipeline_trace[index + 1]["action"] if index + 1 < len(pipeline_trace) else "observe_search_result"
+        routes = ["dense", "sparse", *(["hyde"] if hyde_dense else [])]
         return RetrievalResult(
             candidates=selected,
             query=query,
@@ -273,11 +267,13 @@ class HybridRetriever:
             conflicts=conflicts,
             strategy={
                 "dense_backend": self.embedder.backend,
+                "sparse_backend": "okapi-bm25",
                 "reranker_backend": self.reranker.backend,
-                "routes": ["dense", "sparse", "hyde"],
+                "routes": routes,
                 "query_expansion": query_expansion_backend,
                 "fusion": "RRF(k=60)",
                 "top_p": top_p,
+                "rerank_min_score": rerank_floor,
                 "metadata_rank": "version_date + published_at + applicability",
             },
             pipeline_trace=pipeline_trace,
@@ -322,14 +318,17 @@ class HybridRetriever:
         self._emit_progress(callback, action, summary, progress_details)
 
     def _rank(self, query: str, chunks: list[Chunk], mode: str, route: str | None = None) -> list[dict[str, Any]]:
-        query_terms = normalize_terms(query)
-        query_vector = self.embedder.dense(query)
-        scored = []
-        for chunk in chunks:
-            text = " ".join([chunk.title, chunk.applicability, chunk.chapter, chunk.content, *chunk.tags])
-            sparse_score = len({term for term in query_terms if term in text.lower()}) / max(len(query_terms), 1)
-            dense_score = self._cosine(query_vector, self.embedder.dense(text))
-            score = dense_score if mode == "dense" else sparse_score
+        if mode == "sparse":
+            texts = [self._searchable(chunk) for chunk in chunks]
+            route_scores = BM25Index(texts).scores(query)
+        else:
+            query_vector = self.embedder.dense(query)
+            route_scores = [
+                cosine_similarity(query_vector, self._embedding_cache[chunk.chunk_id])
+                for chunk in chunks
+            ]
+        scored: list[tuple[float, Chunk]] = []
+        for chunk, score in zip(chunks, route_scores):
             if score > 0:
                 scored.append((score, chunk))
         scored.sort(key=lambda pair: (-pair[0], pair[1].chunk_id))
@@ -392,10 +391,6 @@ class HybridRetriever:
         match = re.search(r"(侧面|顶部|背面).{0,8}(\d+)秒", text)
         return "".join(match.groups()) if match else text[:40]
 
-    def _hyde(self, query: str) -> str:
-        terms = sorted(normalize_terms(query))
-        return f"{query} 可能涉及：{'、'.join(terms)}。请在产品手册中核对操作步骤、适用型号和页码。"
-
     def _candidate(self, chunk: Chunk, score: float, route: str) -> dict[str, Any]:
         return {
             "chunk_id": chunk.chunk_id,
@@ -421,7 +416,9 @@ class HybridRetriever:
             "id": chunk.chunk_id,
             "doc_id": chunk.doc_id,
             "text": chunk.content,
+            "dense_vector": self._embedding_cache.get(chunk.chunk_id, []),
             "metadata": {
+                "embedding_backend": self.embedder.backend,
                 "version_date": chunk.version_date,
                 "published_at": chunk.published_at,
                 "page_start": chunk.page_start,
@@ -432,6 +429,12 @@ class HybridRetriever:
             },
         }
 
-    def _cosine(self, left: list[float], right: list[float]) -> float:
-        return sum(a * b for a, b in zip(left, right))
+    @staticmethod
+    def _searchable(chunk: Chunk) -> str:
+        return " ".join([chunk.title, chunk.applicability, chunk.chapter, chunk.content, *chunk.tags])
+
+    def _cache_embeddings(self, chunks: list[Chunk]) -> None:
+        missing = [chunk for chunk in chunks if chunk.chunk_id not in self._embedding_cache]
+        vectors = self.embedder.dense_many([self._searchable(chunk) for chunk in missing])
+        self._embedding_cache.update({chunk.chunk_id: vector for chunk, vector in zip(missing, vectors)})
 

@@ -9,7 +9,7 @@ try:
     from fastapi import FastAPI, File, HTTPException, UploadFile
     from fastapi.responses import FileResponse, StreamingResponse
     from pydantic import BaseModel, Field
-except ImportError:  # pragma: no cover - keeps the offline CLI dependency-free
+except ImportError:  # pragma: no cover - keeps the CLI importable without API dependencies
     FastAPI = None
     BaseModel = object
 
@@ -33,7 +33,7 @@ if FastAPI is not None:
         document_ids: list[str] = Field(default_factory=list)
 
     class ModelConfigRequest(BaseModel):
-        provider: str = "offline"
+        provider: str = "openai"
         model: str = "gpt-4o-mini"
         base_url: str = "https://api.openai.com/v1"
         api_key: str | None = None
@@ -91,6 +91,9 @@ if FastAPI is not None:
         return {
             "status": "ok",
             "retrieval": "hybrid",
+            "dense_backend": agent.retriever.embedder.backend,
+            "sparse_backend": "okapi-bm25",
+            "reranker_backend": agent.retriever.reranker.backend,
             "graph": "langgraph-or-fallback",
             "milvus": agent.retriever.store.backend,
             "mongo": agent.trace_store.backend,
@@ -138,6 +141,8 @@ if FastAPI is not None:
             ).to_dict()
         except DocumentUploadError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        except ModelConfigError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 

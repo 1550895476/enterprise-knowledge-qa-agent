@@ -1,12 +1,12 @@
 # 企业知识问答 Agent
 
-一个面向企业制度与产品 FAQ 的可离线运行问答 Agent。它不会只做一次检索，而是由决策模型在每轮观察工具结果后选择：补充检索、读取原文、追问或结束。
+一个面向企业制度与产品 FAQ 的在线模型驱动问答 Agent。它不会只做一次检索，而是由当前配置的大模型在每轮观察工具结果后选择：补充检索、读取原文、追问或结束。
 
-在原始考核链路上增加了产品知识库增强链路：LangGraph 编排商品消歧与问答，PDF 结构感知切片保留页码、标题、Layout、图片与父子 Chunk，Milvus/MongoDB/BGE-M3/BGE-Reranker/FastAPI/Docker 均有可替换适配；没有重型依赖或外部服务时自动使用本地降级实现。
+在原始考核链路上增加了产品知识库增强链路：LangGraph 编排商品消歧与问答，PDF 结构感知切片保留页码、标题、Layout、图片与父子 Chunk，Milvus/MongoDB/BGE-M3/BGE-Reranker/FastAPI/Docker 均有可替换适配。检索和存储允许本地降级，但 Agent 决策不提供离线模型，运行问答前必须配置在线模型。
 
 ## 1. 环境与运行
 
-要求 Python 3.10+。基础离线 CLI 可仅使用标准库；API、LangGraph、数据库适配器和 PDF 解析依赖通过 `requirements.txt` 安装：
+要求 Python 3.10+。API、LangGraph、数据库适配器和 PDF 解析依赖通过 `requirements.txt` 安装：
 
 ```bash
 python -m venv .venv
@@ -15,11 +15,12 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-默认使用离线决策模型：
+复制环境变量示例并配置 OpenAI、DeepSeek 或 OpenAI-compatible 中转站：
 
 ```bash
+copy .env.example .env
+# 设置 MODEL_PROVIDER、OPENAI_API_KEY、OPENAI_BASE_URL、OPENAI_MODEL
 python -m src.cli --question "报销期限多久"
-python -m src.cli --question "普通员工出差餐补标准是多少？"
 
 # 高级链路：商品消歧 + 混合检索 + 证据引用
 python -m src.cli --pipeline advanced --question "Pro X1 怎么开机"
@@ -29,15 +30,7 @@ python -m src.cli --pipeline advanced --question "型号 Z9 怎么开机"
 
 输出 JSON，包含 `answer`、`citations`、`gaps`、`status` 与 `trace`。用 `--pretty` 可获得适合人工阅读的格式。
 
-可选地使用 OpenAI-compatible Chat Completions 或 Responses API 服务：
-
-```bash
-copy .env.example .env
-# 填写 OPENAI_API_KEY、OPENAI_BASE_URL、OPENAI_MODEL；协议等选项见 .env.example
-python -m src.cli --model openai --question "报销期限多久"
-```
-
-程序不会读取或提交真实密钥；没有模型服务时请使用默认的 `offline` 入口。离线入口验证流程和规则，不等同于真实大模型效果。
+程序不会提交真实密钥。CLI 从环境变量读取在线模型配置；Web 界面也可在运行时填写并测试模型，密钥仅保存在当前服务进程内存中。未配置在线模型时，上传和文档管理仍可使用，但问答会返回明确的配置错误。
 
 ## 1.1 API 与 Docker
 
@@ -50,7 +43,7 @@ curl -X POST http://localhost:8000/ask -H "Content-Type: application/json" -d "{
 
 浏览器打开 `http://localhost:8000/` 可进入完整操作界面，包括：
 
-- 离线、OpenAI、DeepSeek 与 OpenAI-compatible 中转站配置；
+- OpenAI、DeepSeek 与 OpenAI-compatible 中转站配置；
 - 支持 Responses API / Chat Completions、推理强度与 JSON 输出切换；
 - 可通过 `/models` 获取可用模型列表，选择并测试成功后再启用；
 - PDF、TXT、Markdown 拖拽上传；
@@ -86,7 +79,9 @@ curl http://localhost:8000/documents/UPL-返回的文档ID/status
 docker compose up --build
 ```
 
-`requirements-ml.txt` 用于安装 BGE-M3/BGE-Reranker 权重依赖；设置 `ENABLE_BGE=1` 后启用，未设置时使用可复现的词项/哈希向量降级实现。
+`requirements-ml.txt` 用于安装 BGE-M3/BGE-Reranker 权重依赖；设置 `ENABLE_BGE=1` 后启用真实 BGE-M3 embedding。所有检索路径均使用 Okapi BM25 稀疏召回；未安装模型权重时，Dense 路线使用明确标注的字符 n-gram hashing embedding 降级，不再使用简单词项命中比例。
+
+本次真实 BGE-M3 验证已完成：42 项自动化测试全部通过，六条在线模型 Trace 全部使用 BGE-M3 + Okapi BM25。完整环境、命令、耗时和结果见 [`docs/07-bge-validation.md`](docs/07-bge-validation.md)，机器可读摘要见 [`examples/bge-m3-validation.json`](examples/bge-m3-validation.json)。模型下载完成后可设置 `HF_HUB_OFFLINE=1` 与 `TRANSFORMERS_OFFLINE=1`，让启动不再依赖 Hugging Face 网络。
 
 模拟工具故障以复现容错路径：
 
@@ -101,15 +96,25 @@ python -m src.cli --question "密码忘了怎么办" --fail-read-once
 python -m unittest discover -s tests -v
 ```
 
+使用 `.env` 中配置的在线模型生成评审用真实 Trace，并执行最终交付检查。Web 页面启用的配置只保存在当前服务内存中，不会自动共享给独立运行的录制脚本：
+
+```bash
+python -m scripts.record_online_traces
+python -m scripts.check_submission
+```
+
+真实 Trace 写入 `examples/online/`，覆盖正常、冲突、资料外、改写、上下文追问和工具失败，记录模型配置、输入、实际输出和动作链，但不会写入 API Key。最终仍需人工检查模型输出是否可靠，并按 `docs/06-final-submission.md` 完成用时、替换文档核验、评审权限和最终 SHA。
+
 ## 2. 评审入口
 
 建议按以下顺序查看：
 
 1. `src/agent.py`：主循环与状态上限；
-2. `src/decision.py`：离线模型和 OpenAI-compatible 模型的动作选择；
+2. `src/decision.py`：OpenAI-compatible 模型的动作选择；
 3. `src/tools.py`：文档检索、片段读取和故障注入；
 4. `examples/`：真实运行输出与 Trace；
 5. `docs/02-solution.md`、`docs/03-evaluation.md`：设计取舍与验收结果。
+6. `docs/07-bge-validation.md`：BGE-M3 实际启用与完整测试记录。
 
 ## 3. 项目结构
 
@@ -127,6 +132,7 @@ tests/               可执行单元测试与验收测试
 examples/            输入、实际输出、Trace
 data/                合成制度、商品库和 PDF Chunk
 docs/                题目分析、方案、评估、AI 使用记录、复盘
+scripts/             在线模型 Trace 录制与提交前检查工具
 ```
 
 ## 4. 设计边界

@@ -31,7 +31,7 @@
 
 ## 技术栈补充
 
-高级实现对应 Python、LangGraph、Milvus、MongoDB、BGE-M3、BGE-Reranker、Docker、FastAPI。真实后端通过环境变量启用；离线评审不要求下载模型或启动数据库。
+高级实现对应 Python、LangGraph、Milvus、MongoDB、BGE-M3、BGE-Reranker、Docker、FastAPI。问答决策必须配置真实在线模型；Milvus、MongoDB 与 BGE 可通过环境变量启用，未配置时仅这些检索/存储组件使用本地降级实现。
 
 ## 用户上传文档
 

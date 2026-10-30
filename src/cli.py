@@ -13,7 +13,6 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="企业知识问答 Agent")
     parser.add_argument("--question", required=True)
     parser.add_argument("--history-file", help="包含 role/content 对象数组的 JSON 文件")
-    parser.add_argument("--model", choices=["offline", "openai"], default="offline")
     parser.add_argument("--pipeline", choices=["basic", "advanced"], default="basic", help="advanced 启用商品消歧、混合检索和 LangGraph")
     parser.add_argument("--product-choice", help="advanced 模式下明确选择的 product_id")
     parser.add_argument("--max-steps", type=int, default=6)
@@ -27,11 +26,16 @@ def main() -> int:
         with open(args.history_file, encoding="utf-8") as file:
             history = json.load(file)
     try:
+        model = OpenAICompatibleDecisionModel()
         if args.pipeline == "advanced":
             agent = EnterpriseKnowledgeAgent(max_steps=args.max_steps)
-            result = agent.run(args.question, history=history, selected_product_id=args.product_choice)
+            result = agent.run(
+                args.question,
+                history=history,
+                selected_product_id=args.product_choice,
+                decision_model=model,
+            )
         else:
-            model = OpenAICompatibleDecisionModel() if args.model == "openai" else None
             agent = KnowledgeQAAgent.from_default_data(
                 model=model,
                 max_steps=args.max_steps,

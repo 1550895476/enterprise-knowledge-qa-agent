@@ -1,0 +1,98 @@
+{
+  "recorded_at": "2026-10-30T17:17:56+08:00",
+  "model_config": {
+    "provider": "openai",
+    "model": "gpt-5.6-sol",
+    "base_url": "https://code0.ai/v1",
+    "protocol": "chat_completions",
+    "reasoning_effort": "none",
+    "response_format": "json_object",
+    "persistence": "memory_only"
+  },
+  "retrieval_config": {
+    "dense_backend": "bge-m3",
+    "sparse_backend": "okapi-bm25",
+    "evidence_policy": "read_original_before_answer"
+  },
+  "input": {
+    "question": "那研发员工呢？",
+    "history": [
+      {
+        "role": "user",
+        "content": "普通员工国内出差餐补是多少？"
+      },
+      {
+        "role": "assistant",
+        "content": "普通员工国内出差餐补为 100 元/天。"
+      }
+    ]
+  },
+  "expected_status": "completed",
+  "actual_output": {
+    "question": "那研发员工呢？",
+    "answer": "研发员工国内出差的餐补标准为 150 元/天，按实际出差天数计算（依据文档 D05《研发人员差旅管理细则》2026-04-01 版，第 1 页，Chunk ID: D05）。",
+    "citations": [
+      {
+        "doc_id": "D05",
+        "title": "研发人员差旅管理细则",
+        "version_date": "2026-04-01",
+        "applicability": "研发员工国内出差",
+        "content": "研发员工国内出差的餐补标准为150元/天，按实际出差天数计算。",
+        "page_start": 1,
+        "page_end": 1,
+        "chapter": "",
+        "chunk_id": "D05",
+        "parent_chunk_id": null,
+        "image_refs": [],
+        "source_type": "faq"
+      }
+    ],
+    "gaps": [],
+    "status": "completed"
+  },
+  "trace": [
+    {
+      "step": 1,
+      "kind": "tool_call",
+      "action": "search",
+      "tool": "search_documents",
+      "parameters": {
+        "query": "研发员工国内出差餐补标准"
+      },
+      "result_summary": "Embedding+BM25 混合检索命中 2 份文档",
+      "next_action": "read",
+      "decision_basis": "已命中研发员工适用的差旅制度，需读取原文后再回答",
+      "decision_source": "openai_compatible_model",
+      "status": "completed",
+      "duration_ms": null
+    },
+    {
+      "step": 2,
+      "kind": "tool_call",
+      "action": "read",
+      "tool": "read_document",
+      "parameters": {
+        "doc_id": "D05"
+      },
+      "result_summary": "已读取 D05 原文片段",
+      "next_action": "finish",
+      "decision_basis": "已 search 并读取 D05 原文，内容直接回答研发员工餐补标准，且与普通员工标准不冲突（适用人群不同），可基于原文作答",
+      "decision_source": "openai_compatible_model",
+      "status": "completed",
+      "duration_ms": null
+    },
+    {
+      "step": 3,
+      "kind": "decision",
+      "action": "finish",
+      "tool": null,
+      "parameters": {},
+      "result_summary": "未调用工具",
+      "next_action": null,
+      "decision_basis": "已 search 并读取 D05 原文，内容直接回答研发员工餐补标准，且与普通员工标准不冲突（适用人群不同），可基于原文作答",
+      "decision_source": "openai_compatible_model",
+      "status": "completed",
+      "duration_ms": null
+    }
+  ]
+}

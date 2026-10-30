@@ -2,4 +2,6 @@
 
 每个场景文件都包含当次运行的输入、实际输出摘要和 Trace。重新运行文件中 `command` 即可得到完整 JSON；`trace` 保留了评审需要的步骤、工具参数、返回摘要、后续动作和决策依据。
 
-这些记录使用默认离线模型和 `data/documents.json`，不依赖网络或密钥。
+基础场景记录由测试专用确定性决策桩和 `data/documents.json` 生成，用于验证流程与引用，不代表真实模型效果。生产问答不提供离线模型；评审真实决策效果时需配置在线模型并另行保存运行 Trace。
+
+配置 `.env` 后运行 `python -m scripts.record_online_traces`，会在 `examples/online/` 生成六类必验场景的真实在线模型记录；脚本会校验状态、引用、资料缺口和工具失败标记，且不会写入 API Key。

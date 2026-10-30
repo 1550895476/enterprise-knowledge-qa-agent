@@ -1,0 +1,120 @@
+{
+  "recorded_at": "2026-10-30T17:15:57+08:00",
+  "model_config": {
+    "provider": "openai",
+    "model": "gpt-5.6-sol",
+    "base_url": "https://code0.ai/v1",
+    "protocol": "chat_completions",
+    "reasoning_effort": "none",
+    "response_format": "json_object",
+    "persistence": "memory_only"
+  },
+  "retrieval_config": {
+    "dense_backend": "bge-m3",
+    "sparse_backend": "okapi-bm25",
+    "evidence_policy": "read_original_before_answer"
+  },
+  "input": {
+    "question": "报销期限多久",
+    "history": []
+  },
+  "expected_status": "needs_confirmation",
+  "actual_output": {
+    "question": "报销期限多久",
+    "answer": "我找到的资料存在冲突或适用范围不明确，不能擅自选择一个结论。D02（版本日期 2026-03-01，适用范围未注明）原文：报销单应在费用发生后15天内提交。本文档未说明与其他财务制度冲突时的优先级。；D01（版本日期 2026-01-01，适用范围未注明）原文：员工应在费用发生之日起30天内提交报销申请。本文档未说明与其他财务制度冲突时的优先级。。请确认适用的制度、版本、部门或产品型号，我会据此继续核对。",
+    "citations": [
+      {
+        "doc_id": "D02",
+        "title": "财务报销管理办法",
+        "version_date": "2026-03-01",
+        "applicability": "适用范围未注明",
+        "content": "报销单应在费用发生后15天内提交。本文档未说明与其他财务制度冲突时的优先级。",
+        "page_start": 1,
+        "page_end": 1,
+        "chapter": "",
+        "chunk_id": "D02",
+        "parent_chunk_id": null,
+        "image_refs": [],
+        "source_type": "faq"
+      },
+      {
+        "doc_id": "D01",
+        "title": "员工费用报销制度",
+        "version_date": "2026-01-01",
+        "applicability": "适用范围未注明",
+        "content": "员工应在费用发生之日起30天内提交报销申请。本文档未说明与其他财务制度冲突时的优先级。",
+        "page_start": 1,
+        "page_end": 1,
+        "chapter": "",
+        "chunk_id": "D01",
+        "parent_chunk_id": null,
+        "image_refs": [],
+        "source_type": "faq"
+      }
+    ],
+    "gaps": [
+      "D02《财务报销管理办法》规定费用发生后15天内提交（第1页，Chunk ID：D02）；D01《员工费用报销制度》规定费用发生之日起30天内提交（第1页，Chunk ID：D01）。两份文档均未说明冲突时的优先级。"
+    ],
+    "status": "needs_confirmation"
+  },
+  "trace": [
+    {
+      "step": 1,
+      "kind": "tool_call",
+      "action": "search",
+      "tool": "search_documents",
+      "parameters": {
+        "query": "报销期限 多久 报销时限"
+      },
+      "result_summary": "Embedding+BM25 混合检索命中 2 份文档",
+      "next_action": "read",
+      "decision_basis": "检索命中两份报销制度且期限不同；需先读取原文，并继续核对另一份候选文档后再判断。",
+      "decision_source": "openai_compatible_model",
+      "status": "completed",
+      "duration_ms": null
+    },
+    {
+      "step": 2,
+      "kind": "tool_call",
+      "action": "read",
+      "tool": "read_document",
+      "parameters": {
+        "doc_id": "D02"
+      },
+      "result_summary": "已读取 D02 原文片段",
+      "next_action": "read",
+      "decision_basis": "检索到两份制度的报销期限分别为15天和30天，需读取D01原文核对差异后再作答。",
+      "decision_source": "openai_compatible_model",
+      "status": "completed",
+      "duration_ms": null
+    },
+    {
+      "step": 3,
+      "kind": "tool_call",
+      "action": "read",
+      "tool": "read_document",
+      "parameters": {
+        "doc_id": "D01"
+      },
+      "result_summary": "已读取 D01 原文片段",
+      "next_action": "ask",
+      "decision_basis": "已读取相关文档原文，但制度规定存在冲突，且缺少适用范围和优先级信息，无法据此确定唯一期限",
+      "decision_source": "openai_compatible_model",
+      "status": "completed",
+      "duration_ms": null
+    },
+    {
+      "step": 4,
+      "kind": "decision",
+      "action": "ask",
+      "tool": null,
+      "parameters": {},
+      "result_summary": "未调用工具",
+      "next_action": null,
+      "decision_basis": "已读取相关文档原文，但制度规定存在冲突，且缺少适用范围和优先级信息，无法据此确定唯一期限",
+      "decision_source": "openai_compatible_model",
+      "status": "completed",
+      "duration_ms": null
+    }
+  ]
+}
