@@ -100,10 +100,11 @@ python -m unittest discover -s tests -v
 
 ```bash
 python -m scripts.record_online_traces
+python -m scripts.record_replacement_trace
 python -m scripts.check_submission
 ```
 
-真实 Trace 写入 `examples/online/`，覆盖正常、冲突、资料外、改写、上下文追问和工具失败，记录模型配置、输入、实际输出和动作链，但不会写入 API Key。最终仍需人工检查模型输出是否可靠，并按 `docs/06-final-submission.md` 完成用时、替换文档核验、评审权限和最终 SHA。
+真实 Trace 写入 `examples/online/`，覆盖正常、冲突、资料外、改写、上下文追问、工具失败以及资料替换前后对比，记录模型配置、输入、实际输出和动作链，但不会写入 API Key。最终仍需人工检查模型输出是否可靠，并按 `docs/06-final-submission.md` 确认私有仓库评审权限；最终 SHA 在提交完成后通过 `git rev-parse HEAD` 获取并填写到投递表单。
 
 ## 2. 评审入口
 

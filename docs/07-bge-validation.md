@@ -79,6 +79,8 @@ $env:TRANSFORMERS_OFFLINE='1'
 
 结果为：明确答案 `completed`；冲突 `needs_confirmation` 且引用两份原文；资料外 `insufficient_evidence` 且零引用；改写问题仍发现冲突；上下文追问 `completed`；工具首次失败后恢复并 `completed`。
 
+补充的资料替换记录位于 `examples/online/07-document-replacement.json`：原制度回答 24 个月，修订制度回答 6 个月，引用文档 ID 随资料变化；两轮均使用 `bge-m3`、`okapi-bm25` 和 `bge-reranker`。
+
 ## 网络中断处理
 
 首次下载时 Hugging Face Xet 连接不稳定，完整权重下载并校验后放入标准缓存。后续设置 `HF_HUB_OFFLINE=1` 和 `TRANSFORMERS_OFFLINE=1`，BGE 启动只读本地缓存；在线大模型仍通过项目配置的 OpenAI-compatible 接口调用。这样能区分“检索模型本地可用”和“问答中转站网络可用”两类故障。

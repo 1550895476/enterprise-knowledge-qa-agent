@@ -5,3 +5,5 @@
 基础场景记录由测试专用确定性决策桩和 `data/documents.json` 生成，用于验证流程与引用，不代表真实模型效果。生产问答不提供离线模型；评审真实决策效果时需配置在线模型并另行保存运行 Trace。
 
 配置 `.env` 后运行 `python -m scripts.record_online_traces`，会在 `examples/online/` 生成六类必验场景的真实在线模型记录；脚本会校验状态、引用、资料缺口和工具失败标记，且不会写入 API Key。
+
+运行 `python -m scripts.record_replacement_trace` 会生成 `online/07-document-replacement.json`：同一问题分别限定检索 24 个月原制度与 6 个月修订制度，保留两次实际回答、引用、动作链及变化判断。

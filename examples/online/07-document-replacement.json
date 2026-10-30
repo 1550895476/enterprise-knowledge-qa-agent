@@ -1,0 +1,591 @@
+{
+  "recorded_at": "2026-10-30T21:48:32+08:00",
+  "model_config": {
+    "provider": "openai",
+    "model": "gpt-5.6-sol",
+    "base_url": "https://code0.ai/v1",
+    "protocol": "chat_completions",
+    "reasoning_effort": "none",
+    "response_format": "json_object",
+    "persistence": "memory_only"
+  },
+  "retrieval_config": {
+    "dense_backend": "bge-m3",
+    "sparse_backend": "okapi-bm25",
+    "reranker_backend": "bge-reranker",
+    "evidence_policy": "read_original_before_answer"
+  },
+  "input": {
+    "question": "这份制度规定的保修期是多久？",
+    "baseline_document_id": "UPL-059C46528F857661",
+    "replacement_document_id": "UPL-B71F2FA215F391ED"
+  },
+  "expected_status": "completed",
+  "actual_output": {
+    "question": "这份制度规定的保修期是多久？",
+    "answer": "保修期为6个月，自设备激活之日起计算。（文档ID：UPL-B71F2FA215F391ED-P001-C01；第1页；章节：产品保修制度（修订版）；Chunk ID：UPL-B71F2FA215F391ED-P001-C01）",
+    "citations": [
+      {
+        "doc_id": "UPL-B71F2FA215F391ED-P001-C01",
+        "source_doc_id": "UPL-B71F2FA215F391ED",
+        "title": "产品保修制度-修订版.md",
+        "version_date": "2026-10-30",
+        "applicability": "用户上传文档",
+        "content": "# 产品保修制度（修订版）\n本设备保修期调整为6个月，自激活之日起计算。",
+        "page_start": 1,
+        "page_end": 1,
+        "chapter": "产品保修制度（修订版）",
+        "chunk_id": "UPL-B71F2FA215F391ED-P001-C01",
+        "parent_chunk_id": "UPL-B71F2FA215F391ED-P001",
+        "image_refs": [],
+        "source_type": "user_upload_md"
+      }
+    ],
+    "gaps": [],
+    "status": "completed"
+  },
+  "trace": [
+    {
+      "step": 1,
+      "kind": "retrieval_stage",
+      "action": "dense_retrieve",
+      "tool": "dense_vector_search",
+      "parameters": {
+        "query": "制度规定的保修期是多久"
+      },
+      "result_summary": "Dense 稠密检索完成，命中 1 个候选",
+      "next_action": "sparse_retrieve",
+      "decision_basis": "混合检索流水线按已配置策略继续",
+      "decision_source": "retrieval_pipeline",
+      "status": "completed",
+      "duration_ms": 596
+    },
+    {
+      "step": 1,
+      "kind": "retrieval_stage",
+      "action": "sparse_retrieve",
+      "tool": "bm25_search",
+      "parameters": {
+        "query": "制度规定的保修期是多久"
+      },
+      "result_summary": "BM25 稀疏检索完成，命中 1 个候选",
+      "next_action": "hyde_generate",
+      "decision_basis": "混合检索流水线按已配置策略继续",
+      "decision_source": "retrieval_pipeline",
+      "status": "completed",
+      "duration_ms": 1
+    },
+    {
+      "step": 1,
+      "kind": "retrieval_stage",
+      "action": "hyde_generate",
+      "tool": "active_model",
+      "parameters": {
+        "query": "制度规定的保修期是多久",
+        "model_source": "openai_compatible_model"
+      },
+      "result_summary": "HyDE 假设答案生成完成",
+      "next_action": "hyde_retrieve",
+      "decision_basis": "混合检索流水线按已配置策略继续",
+      "decision_source": "retrieval_pipeline",
+      "status": "completed",
+      "duration_ms": 15860
+    },
+    {
+      "step": 1,
+      "kind": "retrieval_stage",
+      "action": "hyde_retrieve",
+      "tool": "dense_vector_search",
+      "parameters": {
+        "query": "制度规定的保修期通常为自产品验收合格或交付之日起计算，具体期限以产品类别、合同约定及相关保修制度为准；常见期限包括一年、两年或更长。"
+      },
+      "result_summary": "HyDE 稠密检索完成，命中 1 个候选",
+      "next_action": "rrf_fusion",
+      "decision_basis": "混合检索流水线按已配置策略继续",
+      "decision_source": "retrieval_pipeline",
+      "status": "completed",
+      "duration_ms": 1027
+    },
+    {
+      "step": 1,
+      "kind": "retrieval_stage",
+      "action": "rrf_fusion",
+      "tool": "rrf_fusion",
+      "parameters": {
+        "routes": [
+          "dense",
+          "sparse",
+          "hyde"
+        ],
+        "k": 60
+      },
+      "result_summary": "RRF 融合完成，去重后保留 1 个候选",
+      "next_action": "rerank",
+      "decision_basis": "混合检索流水线按已配置策略继续",
+      "decision_source": "retrieval_pipeline",
+      "status": "completed",
+      "duration_ms": 0
+    },
+    {
+      "step": 1,
+      "kind": "retrieval_stage",
+      "action": "rerank",
+      "tool": "bge_reranker",
+      "parameters": {
+        "query": "制度规定的保修期是多久",
+        "top_p": 0.85,
+        "limit": 8,
+        "min_score": 0.1
+      },
+      "result_summary": "统一重排完成，相关性门槛过滤 0 个，Top-p 选出 1 个候选",
+      "next_action": "conflict_check",
+      "decision_basis": "混合检索流水线按已配置策略继续",
+      "decision_source": "retrieval_pipeline",
+      "status": "completed",
+      "duration_ms": 995
+    },
+    {
+      "step": 1,
+      "kind": "retrieval_stage",
+      "action": "conflict_check",
+      "tool": "metadata_conflict_detector",
+      "parameters": {
+        "candidate_count": 1
+      },
+      "result_summary": "冲突检查完成，未发现证据冲突",
+      "next_action": "observe_search_result",
+      "decision_basis": "混合检索流水线按已配置策略继续",
+      "decision_source": "retrieval_pipeline",
+      "status": "completed",
+      "duration_ms": 0
+    },
+    {
+      "step": 1,
+      "kind": "tool_call",
+      "action": "search",
+      "tool": "hybrid_search",
+      "parameters": {
+        "query": "制度规定的保修期是多久"
+      },
+      "result_summary": "混合检索命中 1 个 Chunk，路线=dense+sparse+hyde，Dense=bge-m3，Sparse=okapi-bm25，HyDE 模型=openai_compatible_model，RRF 后重排",
+      "next_action": "read",
+      "decision_basis": "检索命中用户上传的保修制度文档，readings 为空，必须先读取原文再回答",
+      "decision_source": "openai_compatible_model",
+      "status": "completed",
+      "duration_ms": null
+    },
+    {
+      "step": 2,
+      "kind": "tool_call",
+      "action": "read",
+      "tool": "read_chunk",
+      "parameters": {
+        "doc_id": "UPL-B71F2FA215F391ED-P001-C01"
+      },
+      "result_summary": "已读取 UPL-B71F2FA215F391ED-P001-C01 原文片段",
+      "next_action": "finish",
+      "decision_basis": "已读取制度原文，原文明确规定保修期为6个月。",
+      "decision_source": "openai_compatible_model",
+      "status": "completed",
+      "duration_ms": null
+    },
+    {
+      "step": 3,
+      "kind": "decision",
+      "action": "finish",
+      "tool": null,
+      "parameters": {},
+      "result_summary": "未调用工具",
+      "next_action": null,
+      "decision_basis": "已读取制度原文，原文明确规定保修期为6个月。",
+      "decision_source": "openai_compatible_model",
+      "status": "completed",
+      "duration_ms": null
+    }
+  ],
+  "replacement_validation": {
+    "baseline": {
+      "actual_output": {
+        "question": "这份制度规定的保修期是多久？",
+        "answer": "保修期为24个月，自激活之日起计算。（文档ID：UPL-059C46528F857661-P001-C01；第1页；章节：产品保修制度；Chunk ID：UPL-059C46528F857661-P001-C01）",
+        "citations": [
+          {
+            "doc_id": "UPL-059C46528F857661-P001-C01",
+            "source_doc_id": "UPL-059C46528F857661",
+            "title": "产品保修制度-2026版.md",
+            "version_date": "2026-10-30",
+            "applicability": "用户上传文档",
+            "content": "# 产品保修制度\n本设备保修期为24个月，自激活之日起计算。",
+            "page_start": 1,
+            "page_end": 1,
+            "chapter": "产品保修制度",
+            "chunk_id": "UPL-059C46528F857661-P001-C01",
+            "parent_chunk_id": "UPL-059C46528F857661-P001",
+            "image_refs": [],
+            "source_type": "user_upload_md"
+          }
+        ],
+        "gaps": [],
+        "status": "completed"
+      },
+      "trace": [
+        {
+          "step": 1,
+          "kind": "retrieval_stage",
+          "action": "dense_retrieve",
+          "tool": "dense_vector_search",
+          "parameters": {
+            "query": "制度 保修期 多久 保修期限"
+          },
+          "result_summary": "Dense 稠密检索完成，命中 1 个候选",
+          "next_action": "sparse_retrieve",
+          "decision_basis": "混合检索流水线按已配置策略继续",
+          "decision_source": "retrieval_pipeline",
+          "status": "completed",
+          "duration_ms": 605
+        },
+        {
+          "step": 1,
+          "kind": "retrieval_stage",
+          "action": "sparse_retrieve",
+          "tool": "bm25_search",
+          "parameters": {
+            "query": "制度 保修期 多久 保修期限"
+          },
+          "result_summary": "BM25 稀疏检索完成，命中 1 个候选",
+          "next_action": "hyde_generate",
+          "decision_basis": "混合检索流水线按已配置策略继续",
+          "decision_source": "retrieval_pipeline",
+          "status": "completed",
+          "duration_ms": 10
+        },
+        {
+          "step": 1,
+          "kind": "retrieval_stage",
+          "action": "hyde_generate",
+          "tool": "active_model",
+          "parameters": {
+            "query": "制度 保修期 多久 保修期限",
+            "model_source": "openai_compatible_model"
+          },
+          "result_summary": "HyDE 假设答案生成完成",
+          "next_action": "hyde_retrieve",
+          "decision_basis": "混合检索流水线按已配置策略继续",
+          "decision_source": "retrieval_pipeline",
+          "status": "completed",
+          "duration_ms": 6704
+        },
+        {
+          "step": 1,
+          "kind": "retrieval_stage",
+          "action": "hyde_retrieve",
+          "tool": "dense_vector_search",
+          "parameters": {
+            "query": "本产品的保修期限自购买之日起计算，整机保修一年，主要零部件保修三年。保修期内因产品质量问题导致的故障，可凭有效购机凭证和保修卡享受免费维修服务；因人为损坏、擅自拆修、不可抗力等原因造成的故障不属于保修范围，将收取相应维修费用。具体保修政策以产品说明书及销售合同约定为准。"
+          },
+          "result_summary": "HyDE 稠密检索完成，命中 1 个候选",
+          "next_action": "rrf_fusion",
+          "decision_basis": "混合检索流水线按已配置策略继续",
+          "decision_source": "retrieval_pipeline",
+          "status": "completed",
+          "duration_ms": 388
+        },
+        {
+          "step": 1,
+          "kind": "retrieval_stage",
+          "action": "rrf_fusion",
+          "tool": "rrf_fusion",
+          "parameters": {
+            "routes": [
+              "dense",
+              "sparse",
+              "hyde"
+            ],
+            "k": 60
+          },
+          "result_summary": "RRF 融合完成，去重后保留 1 个候选",
+          "next_action": "rerank",
+          "decision_basis": "混合检索流水线按已配置策略继续",
+          "decision_source": "retrieval_pipeline",
+          "status": "completed",
+          "duration_ms": 0
+        },
+        {
+          "step": 1,
+          "kind": "retrieval_stage",
+          "action": "rerank",
+          "tool": "bge_reranker",
+          "parameters": {
+            "query": "制度 保修期 多久 保修期限",
+            "top_p": 0.85,
+            "limit": 8,
+            "min_score": 0.1
+          },
+          "result_summary": "统一重排完成，相关性门槛过滤 0 个，Top-p 选出 1 个候选",
+          "next_action": "conflict_check",
+          "decision_basis": "混合检索流水线按已配置策略继续",
+          "decision_source": "retrieval_pipeline",
+          "status": "completed",
+          "duration_ms": 421
+        },
+        {
+          "step": 1,
+          "kind": "retrieval_stage",
+          "action": "conflict_check",
+          "tool": "metadata_conflict_detector",
+          "parameters": {
+            "candidate_count": 1
+          },
+          "result_summary": "冲突检查完成，未发现证据冲突",
+          "next_action": "observe_search_result",
+          "decision_basis": "混合检索流水线按已配置策略继续",
+          "decision_source": "retrieval_pipeline",
+          "status": "completed",
+          "duration_ms": 0
+        },
+        {
+          "step": 1,
+          "kind": "tool_call",
+          "action": "search",
+          "tool": "hybrid_search",
+          "parameters": {
+            "query": "制度 保修期 多久 保修期限"
+          },
+          "result_summary": "混合检索命中 1 个 Chunk，路线=dense+sparse+hyde，Dense=bge-m3，Sparse=okapi-bm25，HyDE 模型=openai_compatible_model，RRF 后重排",
+          "next_action": "read",
+          "decision_basis": "检索已命中相关文档，但尚未读取原文；需要先读取文档后再回答",
+          "decision_source": "openai_compatible_model",
+          "status": "completed",
+          "duration_ms": null
+        },
+        {
+          "step": 2,
+          "kind": "tool_call",
+          "action": "read",
+          "tool": "read_chunk",
+          "parameters": {
+            "doc_id": "UPL-059C46528F857661-P001-C01"
+          },
+          "result_summary": "已读取 UPL-059C46528F857661-P001-C01 原文片段",
+          "next_action": "finish",
+          "decision_basis": "已读取用户上传的《产品保修制度-2026版》原文，依据原文作答。",
+          "decision_source": "openai_compatible_model",
+          "status": "completed",
+          "duration_ms": null
+        },
+        {
+          "step": 3,
+          "kind": "decision",
+          "action": "finish",
+          "tool": null,
+          "parameters": {},
+          "result_summary": "未调用工具",
+          "next_action": null,
+          "decision_basis": "已读取用户上传的《产品保修制度-2026版》原文，依据原文作答。",
+          "decision_source": "openai_compatible_model",
+          "status": "completed",
+          "duration_ms": null
+        }
+      ]
+    },
+    "replacement": {
+      "actual_output": {
+        "question": "这份制度规定的保修期是多久？",
+        "answer": "保修期为6个月，自设备激活之日起计算。（文档ID：UPL-B71F2FA215F391ED-P001-C01；第1页；章节：产品保修制度（修订版）；Chunk ID：UPL-B71F2FA215F391ED-P001-C01）",
+        "citations": [
+          {
+            "doc_id": "UPL-B71F2FA215F391ED-P001-C01",
+            "source_doc_id": "UPL-B71F2FA215F391ED",
+            "title": "产品保修制度-修订版.md",
+            "version_date": "2026-10-30",
+            "applicability": "用户上传文档",
+            "content": "# 产品保修制度（修订版）\n本设备保修期调整为6个月，自激活之日起计算。",
+            "page_start": 1,
+            "page_end": 1,
+            "chapter": "产品保修制度（修订版）",
+            "chunk_id": "UPL-B71F2FA215F391ED-P001-C01",
+            "parent_chunk_id": "UPL-B71F2FA215F391ED-P001",
+            "image_refs": [],
+            "source_type": "user_upload_md"
+          }
+        ],
+        "gaps": [],
+        "status": "completed"
+      },
+      "trace": [
+        {
+          "step": 1,
+          "kind": "retrieval_stage",
+          "action": "dense_retrieve",
+          "tool": "dense_vector_search",
+          "parameters": {
+            "query": "制度规定的保修期是多久"
+          },
+          "result_summary": "Dense 稠密检索完成，命中 1 个候选",
+          "next_action": "sparse_retrieve",
+          "decision_basis": "混合检索流水线按已配置策略继续",
+          "decision_source": "retrieval_pipeline",
+          "status": "completed",
+          "duration_ms": 596
+        },
+        {
+          "step": 1,
+          "kind": "retrieval_stage",
+          "action": "sparse_retrieve",
+          "tool": "bm25_search",
+          "parameters": {
+            "query": "制度规定的保修期是多久"
+          },
+          "result_summary": "BM25 稀疏检索完成，命中 1 个候选",
+          "next_action": "hyde_generate",
+          "decision_basis": "混合检索流水线按已配置策略继续",
+          "decision_source": "retrieval_pipeline",
+          "status": "completed",
+          "duration_ms": 1
+        },
+        {
+          "step": 1,
+          "kind": "retrieval_stage",
+          "action": "hyde_generate",
+          "tool": "active_model",
+          "parameters": {
+            "query": "制度规定的保修期是多久",
+            "model_source": "openai_compatible_model"
+          },
+          "result_summary": "HyDE 假设答案生成完成",
+          "next_action": "hyde_retrieve",
+          "decision_basis": "混合检索流水线按已配置策略继续",
+          "decision_source": "retrieval_pipeline",
+          "status": "completed",
+          "duration_ms": 15860
+        },
+        {
+          "step": 1,
+          "kind": "retrieval_stage",
+          "action": "hyde_retrieve",
+          "tool": "dense_vector_search",
+          "parameters": {
+            "query": "制度规定的保修期通常为自产品验收合格或交付之日起计算，具体期限以产品类别、合同约定及相关保修制度为准；常见期限包括一年、两年或更长。"
+          },
+          "result_summary": "HyDE 稠密检索完成，命中 1 个候选",
+          "next_action": "rrf_fusion",
+          "decision_basis": "混合检索流水线按已配置策略继续",
+          "decision_source": "retrieval_pipeline",
+          "status": "completed",
+          "duration_ms": 1027
+        },
+        {
+          "step": 1,
+          "kind": "retrieval_stage",
+          "action": "rrf_fusion",
+          "tool": "rrf_fusion",
+          "parameters": {
+            "routes": [
+              "dense",
+              "sparse",
+              "hyde"
+            ],
+            "k": 60
+          },
+          "result_summary": "RRF 融合完成，去重后保留 1 个候选",
+          "next_action": "rerank",
+          "decision_basis": "混合检索流水线按已配置策略继续",
+          "decision_source": "retrieval_pipeline",
+          "status": "completed",
+          "duration_ms": 0
+        },
+        {
+          "step": 1,
+          "kind": "retrieval_stage",
+          "action": "rerank",
+          "tool": "bge_reranker",
+          "parameters": {
+            "query": "制度规定的保修期是多久",
+            "top_p": 0.85,
+            "limit": 8,
+            "min_score": 0.1
+          },
+          "result_summary": "统一重排完成，相关性门槛过滤 0 个，Top-p 选出 1 个候选",
+          "next_action": "conflict_check",
+          "decision_basis": "混合检索流水线按已配置策略继续",
+          "decision_source": "retrieval_pipeline",
+          "status": "completed",
+          "duration_ms": 995
+        },
+        {
+          "step": 1,
+          "kind": "retrieval_stage",
+          "action": "conflict_check",
+          "tool": "metadata_conflict_detector",
+          "parameters": {
+            "candidate_count": 1
+          },
+          "result_summary": "冲突检查完成，未发现证据冲突",
+          "next_action": "observe_search_result",
+          "decision_basis": "混合检索流水线按已配置策略继续",
+          "decision_source": "retrieval_pipeline",
+          "status": "completed",
+          "duration_ms": 0
+        },
+        {
+          "step": 1,
+          "kind": "tool_call",
+          "action": "search",
+          "tool": "hybrid_search",
+          "parameters": {
+            "query": "制度规定的保修期是多久"
+          },
+          "result_summary": "混合检索命中 1 个 Chunk，路线=dense+sparse+hyde，Dense=bge-m3，Sparse=okapi-bm25，HyDE 模型=openai_compatible_model，RRF 后重排",
+          "next_action": "read",
+          "decision_basis": "检索命中用户上传的保修制度文档，readings 为空，必须先读取原文再回答",
+          "decision_source": "openai_compatible_model",
+          "status": "completed",
+          "duration_ms": null
+        },
+        {
+          "step": 2,
+          "kind": "tool_call",
+          "action": "read",
+          "tool": "read_chunk",
+          "parameters": {
+            "doc_id": "UPL-B71F2FA215F391ED-P001-C01"
+          },
+          "result_summary": "已读取 UPL-B71F2FA215F391ED-P001-C01 原文片段",
+          "next_action": "finish",
+          "decision_basis": "已读取制度原文，原文明确规定保修期为6个月。",
+          "decision_source": "openai_compatible_model",
+          "status": "completed",
+          "duration_ms": null
+        },
+        {
+          "step": 3,
+          "kind": "decision",
+          "action": "finish",
+          "tool": null,
+          "parameters": {},
+          "result_summary": "未调用工具",
+          "next_action": null,
+          "decision_basis": "已读取制度原文，原文明确规定保修期为6个月。",
+          "decision_source": "openai_compatible_model",
+          "status": "completed",
+          "duration_ms": null
+        }
+      ]
+    },
+    "baseline_actions": [
+      "search",
+      "read",
+      "finish"
+    ],
+    "replacement_actions": [
+      "search",
+      "read",
+      "finish"
+    ],
+    "answer_changed": true,
+    "citation_changed": true,
+    "action_sequence_changed": false,
+    "action_review": "动作序列保持一致是预期结果：替换前后都只有一份充分且无冲突的原文，因此模型均执行检索、读取、结束；答案值与引用文档随资料改变。",
+    "failures": []
+  }
+}

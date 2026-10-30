@@ -17,6 +17,7 @@ python -m unittest discover -s tests -v
 | 上下文追问：研发员工餐补 | `examples/05-context-*` |
 | 工具失败：检索一次失败后恢复 | `examples/06-tool-failure-*` |
 | 高级商品问答：Pro X1 开机 | `examples/07-advanced-product.json` |
+| 资料替换：保修期 24 个月改为 6 个月 | `examples/online/07-document-replacement.json` |
 
 ## 预期与实际
 
@@ -26,6 +27,7 @@ python -m unittest discover -s tests -v
 - 改写问题：实际仍命中报销文档并发现冲突；
 - 上下文追问：实际读取 D05，回答研发员工 150 元/天；
 - 工具失败：实际 Trace 记录失败，随后改写查询并完成回答。
+- 资料替换：同一问题在原制度下回答 24 个月并引用原文档，切换到修订制度后回答 6 个月并引用新的文档 ID；两次动作均为 `search → read → finish`，说明资料改变后答案和引用改变，而证据充分性相同，因此动作序列无需人为制造差异。
 
 高级链路额外通过 3 项测试：
 
@@ -44,6 +46,8 @@ python -m unittest discover -s tests -v
 模型发现测试模拟中转站 `/models` 返回重复模型，验证模型 ID 去重排序、完整 Chat Completions URL 自动归一化为 Base URL，以及最终请求路径为 `/v1/models`。
 
 已使用 `python -m scripts.record_online_traces` 将当前在线模型的正常、冲突、资料外、改写问题、上下文追问和工具失败六条路径写入 `examples/online/`。六条记录均保留 `decision_source=openai_compatible_model`、`dense_backend=bge-m3` 和 `sparse_backend=okapi-bm25`；冲突与改写路径各引用两份原文，资料外路径无引用且返回资料缺口，工具失败路径记录 `status=failed` 后恢复。测试桩记录只证明流程，`examples/online/` 用于验证真实模型效果。BGE 环境、探针、耗时和完整命令见 `docs/07-bge-validation.md` 与 `examples/bge-m3-validation.json`。
+
+另使用 `python -m scripts.record_replacement_trace` 录制资料替换前后对比。两轮均由真实在线模型决策并使用 BGE-M3/BGE-Reranker；答案从 24 个月变为 6 个月，引用源文档 ID 同步变化，验证回答不是写死在代码或预设日志中。
 
 ## 限制与失败风险
 

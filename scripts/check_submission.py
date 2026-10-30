@@ -28,6 +28,7 @@ REQUIRED_ONLINE_TRACES = {
     "05-context-follow-up.json",
     "06-tool-failure.json",
 }
+REPLACEMENT_TRACE = "07-document-replacement.json"
 
 
 def _git(*args: str) -> str:
@@ -79,6 +80,16 @@ def main() -> int:
                     event.get("status") == "failed" for event in payload.get("trace", [])
                 ):
                     failures.append("工具失败 Trace 没有 status=failed 事件：06-tool-failure.json")
+                if path.name == REPLACEMENT_TRACE:
+                    validation = payload.get("replacement_validation", {})
+                    baseline = validation.get("baseline", {}).get("actual_output", {})
+                    replacement = validation.get("replacement", {}).get("actual_output", {})
+                    if validation.get("failures"):
+                        failures.append("资料替换 Trace 存在验证失败：07-document-replacement.json")
+                    if not validation.get("answer_changed") or not validation.get("citation_changed"):
+                        failures.append("资料替换后答案或引用未变化：07-document-replacement.json")
+                    if "24个月" not in baseline.get("answer", "") or "6个月" not in replacement.get("answer", ""):
+                        failures.append("资料替换 Trace 未证明 24 个月变为 6 个月")
             except (json.JSONDecodeError, OSError):
                 warnings.append(f"无法解析在线 Trace：{path.relative_to(ROOT)}")
     missing_online = sorted(REQUIRED_ONLINE_TRACES - online_files)
@@ -86,6 +97,8 @@ def main() -> int:
         failures.append("缺少六类必验在线 Trace：" + "、".join(missing_online))
     if len(online_records) < 2:
         failures.append("少于两条 Trace 含真实在线模型决策；运行 python -m scripts.record_online_traces")
+    if REPLACEMENT_TRACE not in online_files:
+        failures.append("缺少资料替换前后对比 Trace：examples/online/07-document-replacement.json")
     manifest_path = online_dir / "manifest.json"
     if online_dir.exists() and not manifest_path.exists():
         failures.append("缺少在线 Trace 清单：examples/online/manifest.json")
@@ -96,12 +109,19 @@ def main() -> int:
                 failures.append("在线 Trace 录制存在失败，请查看 examples/online/manifest.json 后重新录制")
             if set(manifest.get("files", [])) != REQUIRED_ONLINE_TRACES:
                 failures.append("在线 Trace 清单未包含全部六类必验场景")
+            if REPLACEMENT_TRACE not in manifest.get("supplemental_files", []):
+                failures.append("在线 Trace 清单未登记资料替换对比记录")
         except (json.JSONDecodeError, OSError):
             failures.append("无法解析在线 Trace 清单：examples/online/manifest.json")
 
     retrospective = (ROOT / "docs/05-retrospective.md").read_text(encoding="utf-8")
     if "【请填写实际用时】" in retrospective:
         failures.append("尚未填写实际投入时间：docs/05-retrospective.md")
+    if "尚需使用候选人自己的在线模型录制" in retrospective:
+        failures.append("复盘文档仍错误标记真实在线 Trace 为未完成")
+    final_checklist = (ROOT / "docs/06-final-submission.md").read_text(encoding="utf-8")
+    if "<完成最终提交后填写 40 位 SHA>" in final_checklist:
+        failures.append("最终提交文档仍包含 SHA 占位符")
 
     tracked = set(_git("ls-files").splitlines())
     if ".env" in tracked:

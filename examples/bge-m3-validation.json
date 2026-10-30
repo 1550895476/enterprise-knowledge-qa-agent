@@ -32,6 +32,16 @@
     "sparse_backend": "okapi-bm25",
     "evidence_policy": "read_original_before_answer"
   },
+  "replacement_trace": {
+    "file": "examples/online/07-document-replacement.json",
+    "baseline_answer_fact": "24个月",
+    "replacement_answer_fact": "6个月",
+    "answer_changed": true,
+    "citation_changed": true,
+    "baseline_actions": ["search", "read", "finish"],
+    "replacement_actions": ["search", "read", "finish"],
+    "action_review": "资料替换前后证据均单一且充分，因此动作序列保持一致；答案和引用随原文变化。"
+  },
   "scenarios": [
     {"file": "01-normal.json", "status": "completed", "citations": 1},
     {"file": "02-conflict.json", "status": "needs_confirmation", "citations": 2},

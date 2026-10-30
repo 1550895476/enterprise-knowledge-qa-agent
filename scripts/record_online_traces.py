@@ -140,6 +140,11 @@ def main() -> int:
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "model_config": config.public(),
         "files": recorded_files,
+        "supplemental_files": (
+            ["07-document-replacement.json"]
+            if (output_dir / "07-document-replacement.json").exists()
+            else []
+        ),
         "failures": failures,
     }
     manifest["model_config"].pop("api_key_configured", None)

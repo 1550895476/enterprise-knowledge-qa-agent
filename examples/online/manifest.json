@@ -17,5 +17,8 @@
     "05-context-follow-up.json",
     "06-tool-failure.json"
   ],
-  "failures": []
+  "failures": [],
+  "supplemental_files": [
+    "07-document-replacement.json"
+  ]
 }
